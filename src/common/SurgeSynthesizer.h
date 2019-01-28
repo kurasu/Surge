@@ -105,7 +105,7 @@ public:
 
    SurgeVoice* getUnusedVoice(int scene);
    void freeVoice(SurgeVoice*);
-   SurgeVoice* voices_array[2][MAX_VOICES];
+   array<array<SurgeVoice, MAX_VOICES>, 2> voices_array;
    unsigned int voices_usedby[2][MAX_VOICES]; // 0 indicates no user, 1 is scene A & 2 is scene B
 
    bool
@@ -168,9 +168,9 @@ public:
 public:
    int CC0, PCH, patchid;
    float masterfade = 0;
-   HalfRateFilter *halfbandA, *halfbandB, *halfbandIN;
+   HalfRateFilter halfbandA, halfbandB, halfbandIN;
    list<SurgeVoice*> voices[2];
-   Effect* fx[8];
+   unique_ptr<Effect> fx[8];
    bool halt_engine = false;
    MidiChannelState channelState[16];
    bool mpeEnabled = false;
