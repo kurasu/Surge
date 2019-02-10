@@ -38,7 +38,7 @@ const int HRFilterI16[64] = {
 
 int min_F32_tables = 3;
 
-#if MAC || __linux__
+#if MAC || LINUX
 bool _BitScanReverse(unsigned int* result, unsigned int bits)
 {
    *result = __builtin_ctz(bits);
@@ -87,6 +87,7 @@ Wavetable::Wavetable()
    memset(TableI16WeakPointers, 0, sizeof(TableI16WeakPointers));
    current_id = -1;
    queue_id = -1;
+   refresh_display = true; // I have never been drawn so assume I need refresh if asked
 }
 
 void Wavetable::Copy(Wavetable* wt)

@@ -73,6 +73,8 @@ CMouseEventResult CPatchBrowser::onMouseDown(CPoint& where, const CButtonState& 
       int rightMouseCategory = current_category;
       if (current_category < 0)
       {
+          if (storage->patchCategoryOrdering.size() == 0)
+              return kMouseEventHandled;
           for (auto c : storage->patchCategoryOrdering)
           {
               if (_stricmp(storage->patch_category[c].name.c_str(),"init")==0)
@@ -114,7 +116,7 @@ CMouseEventResult CPatchBrowser::onMouseDown(CPoint& where, const CButtonState& 
    contextMenu->popup();
    getFrame()->removeView(contextMenu, true); // remove from frame and forget
 
-   return kMouseEventHandled;
+   return kMouseDownEventHandledButDontNeedMovedOrUpEvents;
 }
 
 bool CPatchBrowser::populatePatchMenuForCategory( int c, COptionMenu *contextMenu, bool single_category, int &main_e, bool rootCall )

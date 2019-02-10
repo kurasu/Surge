@@ -5,7 +5,7 @@
 #include "DspUtilities.h"
 #include <time.h>
 #include <vt_dsp/vt_dsp_endian.h>
-#if __linux__
+#if LINUX
 #include <experimental/filesystem>
 #elif MAC
 #include <filesystem.h>
@@ -109,12 +109,18 @@ void SurgeSynthesizer::incrementCategory(bool nextPrev)
    else
    {
        int order = storage.patch_category[current_category_id].order;
-       if (nextPrev)
-           order = (order >= (n - 1)) ? 0 : order + 1;
-       else
-           order = (order <= 0) ? n - 1 : order - 1;
-       
-       current_category_id = storage.patchCategoryOrdering[order];
+       int orderOrig = order;
+       do
+       {
+           if (nextPrev)
+               order = (order >= (n - 1)) ? 0 : order + 1;
+           else
+               order = (order <= 0) ? n - 1 : order - 1;
+
+           current_category_id = storage.patchCategoryOrdering[order];
+       }
+       while (storage.patch_category[current_category_id].numberOfPatchesInCatgory == 0 && order != orderOrig);
+       // That order != orderOrig isn't needed unless we have an entire empty category tree, in which case it stops an inf loop
    }
    
    // Find the first patch within the category.
@@ -230,7 +236,7 @@ void SurgeSynthesizer::loadRaw(const void* data, int size, bool preset)
    }
 }
 
-#if MAC || __linux__
+#if MAC || LINUX
 #include <sys/types.h>
 #include <sys/stat.h>
 #endif
@@ -241,7 +247,7 @@ string SurgeSynthesizer::getUserPatchDirectory()
 }
 string SurgeSynthesizer::getLegacyUserPatchDirectory()
 {
-#if MAC || __linux__
+#if MAC || LINUX
    return storage.datapath + "patches_user/";
 #else
    return storage.datapath + "patches_user\\";

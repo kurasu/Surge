@@ -16,7 +16,7 @@
 #endif
 #include <tinyxml.h>
 
-#if __linux__
+#if LINUX
 #include <experimental/filesystem>
 #elif MAC
 #include <filesystem.h>
@@ -449,6 +449,8 @@ struct PatchCategory
    int order;
    std::vector<PatchCategory> children;
    bool isRoot;
+
+   int numberOfPatchesInCatgory;
 };
 
 enum sub3_copysource
@@ -554,3 +556,10 @@ namespace Storage
     bool isValidName(const std::string &name);
 }
 }
+
+/*
+** ToElement does a this && check to check nulls. (As does ToDocument and so on).
+** gcc -O3 on linux optimizes that away giving crashes. So do this instead
+** See github issue #469
+*/
+#define TINYXML_SAFE_TO_ELEMENT(expr) ((expr)?(expr)->ToElement():NULL)

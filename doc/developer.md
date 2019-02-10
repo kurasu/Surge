@@ -49,8 +49,9 @@ section stick to 3 spaces. If you are writing new code we are OK with 3 or 4. Bu
 * `class HaveCamelcaseNames`
 * `void functionsAreCamelCaseWithLowerFirst`
 * We are not using `s_` or `m_` or equivalent notations for members or statics
-* Full namespaces are generally prefered over usings. Even though the code has a `using std` in globals.h we are trying to use
+* Full namespaces are generally prefered over usings. We are trying to use
 `std::vector` over `vector` in the code. 
+* Don't `using namespace` in header files. Don't `using namespace std` in new code (but it is in some existing code).
 * Use namespaces not classes to group functions. Check out how we implemented `UserInteractions.h`
 * Long and descriptive names are good. `userMessageDeliveryPipe` is better than `umdp`. 
 
@@ -95,19 +96,14 @@ Generally: Comment your code. Someone coming after you will thank you. And that 
 Format:
 
 ```
-<Short summary putting the change into nutshell less than 80 characters>
+<short summary one-line summary>
 
-<Multi-paragraph (often just one) long description describing what the change does>
+<long description describing the change in detail:
+
+<optional tag>
 ```
 
-Optionally after the long description:
-
-```
-Fixes: #<issue 1>
-Fixes: #<issue 2>
-...
-Fixes: #<issue n>
-```
+A tag can be either `Related: <issue>` or `Closed: <issue>`.
 
 A good example is the commit message from
 [8a769c](https://github.com/surge-synthesizer/surge/commit/8a769c87220959997633a32baabe76a2887d6d18)

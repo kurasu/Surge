@@ -18,8 +18,9 @@
 //#include <MacErrorHandling.h>
 #include <CoreFoundation/CFBundle.h>
 #include <CoreServices/CoreServices.h>
-#elif __linux__
+#elif LINUX
 #include <stdlib.h>
+#include "ConfigurationXml.h"
 #else
 #include <windows.h>
 #include <Shellapi.h>
@@ -135,6 +136,13 @@ SurgeStorage::SurgeStorage()
 
    memset(&audio_in[0][0], 0, 2 * BLOCK_SIZE_OS * sizeof(float));
 
+#if MAC || LINUX
+   const char* homePath = getenv("HOME");
+   if (!homePath)
+      throw Surge::Error("The environment variable HOME does not exist",
+                         "Surge failed to initialize");
+#endif
+
 #if MAC
    char path[1024];
    FSRef foundRef;
@@ -160,29 +168,17 @@ SurgeStorage::SurgeStorage()
    }
 
    // ~/Documents/Surge in full name
-   sprintf( path, "%s/Documents/Surge", getenv( "HOME" ) );
+   sprintf(path, "%s/Documents/Surge", homePath);
    userDataPath = path;
-   
-#elif __linux__
+#elif LINUX
+   const char* xdgDataPath = getenv("XDG_DATA_HOME");
+   if (xdgDataPath)
+      datapath = std::string(xdgDataPath) + "/Surge/";
+   else
+      datapath = std::string(homePath) + "/.local/share/Surge/";
 
-   /*
-    * Even though Linux distinguishes between configuration and data folders,
-    * Surge's configuration.xml does not contain any user preferences that are
-    * modified through the interface, so it seems simplest to continue treating
-    * it as part of the data.
-    */
-
-   string home = string(getenv("HOME"));
-   char* data_home_cstr = getenv("XDG_DATA_HOME");
-   string data_home = (data_home_cstr) ? string(data_home_cstr)
-                                       : home + "/.local/share";
-
-   datapath = data_home + "/Surge/";
-
-   userDataPath = home + "/Documents/Surge";
-
-#else
-
+   userDataPath = std::string(homePath) + "/Documents/Surge";
+#elif WINDOWS
    PWSTR localAppData;
    if (!SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localAppData))
    {
@@ -198,22 +194,27 @@ SurgeStorage::SurgeStorage()
       wsprintf(path, "%S\\Surge\\", documentsFolder);
       userDataPath = path;
    }
-
 #endif
+
+#if LINUX
+   if (!snapshotloader.Parse((const char*)&configurationXmlStart, 0,
+                             TIXML_ENCODING_UTF8)) {
+
+      throw Surge::Error("Failed to parse the configuration",
+                         "Surge failed to initialize");
+   }
+#else
    string snapshotmenupath = datapath + "configuration.xml";
 
    if (!snapshotloader.LoadFile(snapshotmenupath.c_str())) // load snapshots (& config-stuff)
    {
       Surge::Error exc("Cannot find 'configuration.xml' in path '" + datapath + "'. Please reinstall surge.",
                        "Surge is not properly installed.");
-#if __linux__
-      throw exc;
-#else
       Surge::UserInteractions::promptError(exc);
-#endif
    }
+#endif
 
-   TiXmlElement* e = snapshotloader.FirstChild("autometa")->ToElement();
+   TiXmlElement* e = TINYXML_SAFE_TO_ELEMENT(snapshotloader.FirstChild("autometa"));
    if (e)
    {
       defaultname = e->Attribute("name");
@@ -340,8 +341,26 @@ void SurgeStorage::refreshPatchlistAddDir(bool userDir, string subdir)
    for (auto &p : alldirs )
    {
       PatchCategory c;
+#if WINDOWS
+      /*
+      ** Windows filesystem names are properly wstrings which, if we want them to 
+      ** display properly in vstgui, need to be converted to UTF8 using the 
+      ** windows widechar API. Linux and Mac do not require this.
+      */
+      std::wstring str = p.wstring().substr(patchpathSubstrLength);
+      std::string ret;
+      int len = WideCharToMultiByte(CP_UTF8, 0, str.c_str(), str.length(), NULL, 0, NULL, NULL);
+      if (len > 0)
+      {
+          ret.resize(len);
+          WideCharToMultiByte(CP_UTF8, 0, str.c_str(), str.length(), &ret[0], len, NULL, NULL);
+      }
+
+      c.name = ret;
+#else
       c.name = p.generic_string().substr(patchpathSubstrLength);
-      local_patch_category.push_back(c);
+      c.numberOfPatchesInCatgory = 0;
+#endif
       
       for (auto& f : fs::directory_iterator(p))
       {
@@ -350,12 +369,28 @@ void SurgeStorage::refreshPatchlistAddDir(bool userDir, string subdir)
               Patch e;
               e.category = category;
               e.path = f.path();
+#if WINDOWS
+              std::wstring str = f.path().filename().wstring();
+              str = str.substr(0, str.size()-4);
+              std::string ret;
+              int len = WideCharToMultiByte(CP_UTF8, 0, str.c_str(), str.length(), NULL, 0, NULL, NULL);
+              if (len > 0)
+              {
+                  ret.resize(len);
+                  WideCharToMultiByte(CP_UTF8, 0, str.c_str(), str.length(), &ret[0], len, NULL, NULL);
+              }
+              e.name = ret;
+#else
               e.name = f.path().filename().generic_string();
               e.name = e.name.substr(0, e.name.size() - 4);
+#endif              
               patch_list.push_back(e);
+
+              c.numberOfPatchesInCatgory ++;
           }
       }
       
+      local_patch_category.push_back(c);
       category++;
    }
 
@@ -364,6 +399,7 @@ void SurgeStorage::refreshPatchlistAddDir(bool userDir, string subdir)
    ** scanning for names; setting the 'root' to everything without a slash
    ** and finding the parent in the name map for everything with a slash
    */
+
    std::map<std::string,int> nameToLocalIndex;
    int idx=0;
    for (auto &pc : local_patch_category)
@@ -381,6 +417,23 @@ void SurgeStorage::refreshPatchlistAddDir(bool userDir, string subdir)
            local_patch_category[ nameToLocalIndex[ parent ] ].children.push_back( pc );
        }
    }
+
+   /*
+   ** We need to sort the local patch category child to make sure subfolders remain
+   ** sorted when displayed using the child data structure in the menu view.
+   */
+   
+   auto catCompare =
+       [this](const PatchCategory &c1, const PatchCategory &c2) -> bool
+       {
+           return _stricmp(c1.name.c_str(),c2.name.c_str()) < 0;
+       };
+   for (auto &pc : local_patch_category)
+   {
+       std::sort(pc.children.begin(), pc.children.end(), catCompare);
+   }
+
+
 
    /*
    ** Then copy our local patch category onto the member and be done
@@ -837,14 +890,14 @@ void SurgeStorage::clipboard_paste(int type, int scene, int entry)
 
 TiXmlElement* SurgeStorage::getSnapshotSection(const char* name)
 {
-   TiXmlElement* e = snapshotloader.FirstChild(name)->ToElement();
+   TiXmlElement* e = TINYXML_SAFE_TO_ELEMENT(snapshotloader.FirstChild(name));
    if (e)
       return e;
 
    // ok, create a new one then
    TiXmlElement ne(name);
    snapshotloader.InsertEndChild(ne);
-   return snapshotloader.FirstChild(name)->ToElement();
+   return TINYXML_SAFE_TO_ELEMENT(snapshotloader.FirstChild(name));
 }
 
 void SurgeStorage::save_snapshots()
@@ -891,7 +944,7 @@ void SurgeStorage::load_midi_controllers()
    TiXmlElement* mc = getSnapshotSection("midictrl");
    assert(mc);
 
-   TiXmlElement* entry = mc->FirstChild("entry")->ToElement();
+   TiXmlElement* entry = TINYXML_SAFE_TO_ELEMENT(mc->FirstChild("entry"));
    while (entry)
    {
       int id, ctrl;
@@ -902,13 +955,13 @@ void SurgeStorage::load_midi_controllers()
          if (id >= n_global_params)
             getPatch().param_ptr[id + n_scene_params]->midictrl = ctrl;
       }
-      entry = entry->NextSibling("entry")->ToElement();
+      entry = TINYXML_SAFE_TO_ELEMENT(entry->NextSibling("entry"));
    }
 
    TiXmlElement* cc = getSnapshotSection("customctrl");
    assert(cc);
 
-   entry = cc->FirstChild("entry")->ToElement();
+   entry = TINYXML_SAFE_TO_ELEMENT(cc->FirstChild("entry"));
    while (entry)
    {
       int id, ctrl;
@@ -917,7 +970,7 @@ void SurgeStorage::load_midi_controllers()
       {
          controllers[id] = ctrl;
       }
-      entry = entry->NextSibling("entry")->ToElement();
+      entry = TINYXML_SAFE_TO_ELEMENT(entry->NextSibling("entry"));
    }
 }
 
