@@ -19,7 +19,7 @@
 
 using namespace std;
 
-#if __linux__
+#if LINUX
 namespace VSTGUI { void* soHandle = nullptr; }
 #endif
 
@@ -40,7 +40,7 @@ Vst2PluginInstance::Vst2PluginInstance(audioMasterCallback audioMaster)
    setNumInputs(2);  // stereo in
    setNumOutputs(2); // stereo out
 
-#if MAC || __linux__
+#if MAC || LINUX
    isSynth();
    plug_is_synth = true;
    setUniqueID('cjs3'); // identify
@@ -160,9 +160,11 @@ void Vst2PluginInstance::close()
 
 void Vst2PluginInstance::resume()
 {
-
-   _instance->setSamplerate(this->getSampleRate());
-   _instance->audio_processing_active = true;
+   if (_instance)
+   {
+       _instance->setSamplerate(this->getSampleRate());
+       _instance->audio_processing_active = true;
+   }
 
    //	wantEvents ();
    AudioEffectX::resume();

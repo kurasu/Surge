@@ -18,13 +18,16 @@
 //#include <MacErrorHandling.h>
 #include <CoreFoundation/CFBundle.h>
 #include <CoreServices/CoreServices.h>
-#elif __linux__
+#elif LINUX
 #include <stdlib.h>
+#include "ConfigurationXml.h"
 #else
 #include <windows.h>
 #include <Shellapi.h>
 #include <Shlobj.h>
 #endif
+
+#include <sstream>
 
 float sinctable alignas(16)[(FIRipol_M + 1) * FIRipol_N * 2];
 float sinctable1X alignas(16)[(FIRipol_M + 1) * FIRipol_N];
@@ -40,23 +43,7 @@ float samplerate, samplerate_inv;
 double dsamplerate, dsamplerate_inv;
 double dsamplerate_os, dsamplerate_os_inv;
 
-#if MAC
-#include <CoreFoundation/CoreFoundation.h>
-string getSelfLocation()
-{
-   char path[PATH_MAX];
-   // TODO: use a build-provided symbol
-   CFStringRef selfName = CFSTR("com.vemberaudio.plugins.surge");
-   CFBundleRef mainBundle = CFBundleGetBundleWithIdentifier(selfName);
-   CFURLRef resourcesURL = CFBundleCopyBundleURL(mainBundle);
-   CFStringRef str = CFURLCopyFileSystemPath(resourcesURL, kCFURLPOSIXPathStyle);
-   CFRelease(resourcesURL);
-   CFStringGetCString(str, path, FILENAME_MAX, kCFStringEncodingASCII);
-   CFRelease(str);
-   string out(path);
-   return out;
-}
-#endif
+using namespace std;
 
 SurgeStorage::SurgeStorage()
 {
@@ -133,6 +120,13 @@ SurgeStorage::SurgeStorage()
 
    memset(&audio_in[0][0], 0, 2 * BLOCK_SIZE_OS * sizeof(float));
 
+#if MAC || LINUX
+   const char* homePath = getenv("HOME");
+   if (!homePath)
+      throw Surge::Error("The environment variable HOME does not exist",
+                         "Surge failed to initialize");
+#endif
+
 #if MAC
    char path[1024];
    FSRef foundRef;
@@ -158,29 +152,27 @@ SurgeStorage::SurgeStorage()
    }
 
    // ~/Documents/Surge in full name
-   sprintf( path, "%s/Documents/Surge", getenv( "HOME" ) );
+   sprintf(path, "%s/Documents/Surge", homePath);
    userDataPath = path;
-   
-#elif __linux__
+#elif LINUX
+   const char* xdgDataPath = getenv("XDG_DATA_HOME");
+   if (xdgDataPath)
+      datapath = std::string(xdgDataPath) + "/Surge/";
+   else
+      datapath = std::string(homePath) + "/.local/share/Surge/";
 
    /*
-    * Even though Linux distinguishes between configuration and data folders,
-    * Surge's configuration.xml does not contain any user preferences that are
-    * modified through the interface, so it seems simplest to continue treating
-    * it as part of the data.
-    */
-
-   string home = string(getenv("HOME"));
-   char* data_home_cstr = getenv("XDG_DATA_HOME");
-   string data_home = (data_home_cstr) ? string(data_home_cstr)
-                                       : home + "/.local/share";
-
-   datapath = data_home + "/Surge/";
-
-   userDataPath = home + "/Documents/Surge";
-
-#else
-
+   ** If local directory doesn't exists - we probably came here through an installer -
+   ** use /usr/share/Surge as our last guess
+   */
+   if (! fs::is_directory(datapath))
+   {
+      datapath = "/usr/share/Surge/";
+   }
+      
+   
+   userDataPath = std::string(homePath) + "/Documents/Surge";
+#elif WINDOWS
    PWSTR localAppData;
    if (!SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localAppData))
    {
@@ -196,22 +188,27 @@ SurgeStorage::SurgeStorage()
       wsprintf(path, "%S\\Surge\\", documentsFolder);
       userDataPath = path;
    }
-
 #endif
+
+#if LINUX
+   if (!snapshotloader.Parse((const char*)&configurationXmlStart, 0,
+                             TIXML_ENCODING_UTF8)) {
+
+      throw Surge::Error("Failed to parse the configuration",
+                         "Surge failed to initialize");
+   }
+#else
    string snapshotmenupath = datapath + "configuration.xml";
 
    if (!snapshotloader.LoadFile(snapshotmenupath.c_str())) // load snapshots (& config-stuff)
    {
       Surge::Error exc("Cannot find 'configuration.xml' in path '" + datapath + "'. Please reinstall surge.",
                        "Surge is not properly installed.");
-#if __linux__
-      throw exc;
-#else
       Surge::UserInteractions::promptError(exc);
-#endif
    }
+#endif
 
-   TiXmlElement* e = snapshotloader.FirstChild("autometa")->ToElement();
+   TiXmlElement* e = TINYXML_SAFE_TO_ELEMENT(snapshotloader.FirstChild("autometa"));
    if (e)
    {
       defaultname = e->Attribute("name");
@@ -248,6 +245,23 @@ void SurgeStorage::refresh_patchlist()
 
    refreshPatchlistAddDir(false, "patches_factory");
    firstThirdPartyCategory = patch_category.size();
+
+   /*
+   ** Do a quick sanity check here - if there are no patches in factory we are mis-installed
+   */
+   int totalFactory = 0;
+   for(auto &cat : patch_category)
+       totalFactory += cat.numberOfPatchesInCatgory;
+   if(totalFactory == 0)
+   {
+      std::ostringstream ss;
+      ss << "Surge was unable to load factory patches from '" << datapath
+         << "'. Surge found 0 factory patches. Please reinstall using the Surge installer.";
+      Surge::UserInteractions::promptError(ss.str(),
+                                           "Surge Installation Error");
+
+   }
+
    refreshPatchlistAddDir(false, "patches_3rdparty");
    firstUserCategory = patch_category.size();
    refreshPatchlistAddDir(true, "");
@@ -338,8 +352,18 @@ void SurgeStorage::refreshPatchlistAddDir(bool userDir, string subdir)
    for (auto &p : alldirs )
    {
       PatchCategory c;
+#if WINDOWS
+      /*
+      ** Windows filesystem names are properly wstrings which, if we want them to 
+      ** display properly in vstgui, need to be converted to UTF8 using the 
+      ** windows widechar API. Linux and Mac do not require this.
+      */
+      std::wstring str = p.wstring().substr(patchpathSubstrLength);
+      c.name = Surge::Storage::wstringToUTF8(str);
+#else
       c.name = p.generic_string().substr(patchpathSubstrLength);
-      local_patch_category.push_back(c);
+      c.numberOfPatchesInCatgory = 0;
+#endif
       
       for (auto& f : fs::directory_iterator(p))
       {
@@ -348,12 +372,21 @@ void SurgeStorage::refreshPatchlistAddDir(bool userDir, string subdir)
               Patch e;
               e.category = category;
               e.path = f.path();
+#if WINDOWS
+              std::wstring str = f.path().filename().wstring();
+              str = str.substr(0, str.size()-4);
+              e.name = Surge::Storage::wstringToUTF8(str);
+#else
               e.name = f.path().filename().generic_string();
               e.name = e.name.substr(0, e.name.size() - 4);
+#endif              
               patch_list.push_back(e);
+
+              c.numberOfPatchesInCatgory ++;
           }
       }
       
+      local_patch_category.push_back(c);
       category++;
    }
 
@@ -362,23 +395,47 @@ void SurgeStorage::refreshPatchlistAddDir(bool userDir, string subdir)
    ** scanning for names; setting the 'root' to everything without a slash
    ** and finding the parent in the name map for everything with a slash
    */
+
    std::map<std::string,int> nameToLocalIndex;
    int idx=0;
    for (auto &pc : local_patch_category)
        nameToLocalIndex[ pc.name ] = idx++;
+
+   std::string pathSep = "/";
+#if WINDOWS
+   pathSep = "\\";
+#endif
+
    for (auto &pc : local_patch_category)
    {
-       if (pc.name.find("/") == std::string::npos)
+       if (pc.name.find(pathSep) == std::string::npos)
        {
            pc.isRoot = true;
        }
        else
        {
            pc.isRoot = false;
-           std::string parent = pc.name.substr(0, pc.name.find_last_of("/") );
+           std::string parent = pc.name.substr(0, pc.name.find_last_of(pathSep) );
            local_patch_category[ nameToLocalIndex[ parent ] ].children.push_back( pc );
        }
    }
+
+   /*
+   ** We need to sort the local patch category child to make sure subfolders remain
+   ** sorted when displayed using the child data structure in the menu view.
+   */
+   
+   auto catCompare =
+       [this](const PatchCategory &c1, const PatchCategory &c2) -> bool
+       {
+           return _stricmp(c1.name.c_str(),c2.name.c_str()) < 0;
+       };
+   for (auto &pc : local_patch_category)
+   {
+       std::sort(pc.children.begin(), pc.children.end(), catCompare);
+   }
+
+
 
    /*
    ** Then copy our local patch category onto the member and be done
@@ -402,36 +459,50 @@ void SurgeStorage::refresh_wtlist()
 
    if (!fs::is_directory(patchpath))
    {
+      std::ostringstream ss;
+      ss << "Surge was unable to load wavetables from '" << patchpath.generic_string()
+         << "'. The directory does not exist. Please reinstall using the Surge installer.";
+      Surge::UserInteractions::promptError(ss.str(),
+                                           "Surge Installation Error");
+
       return;
    }
+
+   std::vector<std::string> supportedTableFileTypes;
+   supportedTableFileTypes.push_back(".wt");
+   supportedTableFileTypes.push_back(".wav");
 
    for (auto& p : fs::directory_iterator(patchpath))
    {
       if (fs::is_directory(p))
       {
          PatchCategory c;
+#if WINDOWS
+         std::wstring str = p.path().filename().wstring();
+         c.name = Surge::Storage::wstringToUTF8(str);
+#else
          c.name = p.path().filename().generic_string();
+#endif
          wt_category.push_back(c);
 
          for (auto& f : fs::directory_iterator(p))
          {
-            if (_stricmp(f.path().extension().generic_string().c_str(), ".wt") == 0)
+            for(auto &ft : supportedTableFileTypes )
             {
-               Patch e;
-               e.category = category;
-               e.path = f.path();
-               e.name = f.path().filename().generic_string();
-               e.name = e.name.substr(0, e.name.size() - 3);
-               wt_list.push_back(e);
-            }
-            else if (_stricmp(f.path().extension().generic_string().c_str(), ".wav") == 0)
-            {
-               Patch e;
-               e.category = category;
-               e.path = f.path();
-               e.name = f.path().filename().generic_string();
-               e.name = e.name.substr(0, e.name.size() - 4);
-               wt_list.push_back(e);
+                if (_stricmp(f.path().extension().generic_string().c_str(), ft.c_str()) == 0)
+                {
+                    Patch e;
+                    e.category = category;
+                    e.path = f.path();
+#if WINDOWS
+                    std::wstring str = f.path().filename().wstring();
+                    e.name = Surge::Storage::wstringToUTF8(str.substr(0, str.size() - ft.size()));
+#else
+                    e.name = f.path().filename().generic_string();
+                    e.name = e.name.substr(0, e.name.size() - ft.size());
+#endif 
+                    wt_list.push_back(e);
+                }
             }
          }
 
@@ -439,11 +510,13 @@ void SurgeStorage::refresh_wtlist()
       }
    }
 
-   if (wt_category.size() < 1 && wt_list.size() < 1)
+   if (wt_category.size() == 0 || wt_list.size() == 0)
    {
-       Surge::UserInteractions::promptError(std::string("Surge was unable to load wavetables from disk. ") +
-                                            "Please reinstall using the surge installer.",
-                                            "Surge Installation Error" );
+      std::ostringstream ss;
+      ss << "Surge was unable to load wavetables from '" << patchpath.generic_string()
+         << "'. The directory contains no wavetables. Please reinstall using the Surge installer.";
+      Surge::UserInteractions::promptError(ss.str(),
+                                           "Surge Installation Error" );
    }
 
    wtCategoryOrdering = std::vector<int>(wt_category.size());
@@ -835,14 +908,14 @@ void SurgeStorage::clipboard_paste(int type, int scene, int entry)
 
 TiXmlElement* SurgeStorage::getSnapshotSection(const char* name)
 {
-   TiXmlElement* e = snapshotloader.FirstChild(name)->ToElement();
+   TiXmlElement* e = TINYXML_SAFE_TO_ELEMENT(snapshotloader.FirstChild(name));
    if (e)
       return e;
 
    // ok, create a new one then
    TiXmlElement ne(name);
    snapshotloader.InsertEndChild(ne);
-   return snapshotloader.FirstChild(name)->ToElement();
+   return TINYXML_SAFE_TO_ELEMENT(snapshotloader.FirstChild(name));
 }
 
 void SurgeStorage::save_snapshots()
@@ -889,7 +962,7 @@ void SurgeStorage::load_midi_controllers()
    TiXmlElement* mc = getSnapshotSection("midictrl");
    assert(mc);
 
-   TiXmlElement* entry = mc->FirstChild("entry")->ToElement();
+   TiXmlElement* entry = TINYXML_SAFE_TO_ELEMENT(mc->FirstChild("entry"));
    while (entry)
    {
       int id, ctrl;
@@ -900,13 +973,13 @@ void SurgeStorage::load_midi_controllers()
          if (id >= n_global_params)
             getPatch().param_ptr[id + n_scene_params]->midictrl = ctrl;
       }
-      entry = entry->NextSibling("entry")->ToElement();
+      entry = TINYXML_SAFE_TO_ELEMENT(entry->NextSibling("entry"));
    }
 
    TiXmlElement* cc = getSnapshotSection("customctrl");
    assert(cc);
 
-   entry = cc->FirstChild("entry")->ToElement();
+   entry = TINYXML_SAFE_TO_ELEMENT(cc->FirstChild("entry"));
    while (entry)
    {
       int id, ctrl;
@@ -915,7 +988,7 @@ void SurgeStorage::load_midi_controllers()
       {
          controllers[id] = ctrl;
       }
-      entry = entry->NextSibling("entry")->ToElement();
+      entry = TINYXML_SAFE_TO_ELEMENT(entry->NextSibling("entry"));
    }
 }
 
@@ -1069,20 +1142,36 @@ float envelope_rate_linear(float x)
 
 namespace Surge
 {
-    namespace Storage
-    {
-        bool isValidName(const std::string &patchName)
-        {
-            bool valid = false;
-            
-            // No need to validate size separately as an empty string won't have visible characters.
-            for (const char &c : patchName)
-                if (std::isalnum(c) || std::ispunct(c))
-                    valid = true;
-                else if (c != ' ')
-                    return false;
+namespace Storage
+{
+bool isValidName(const std::string &patchName)
+{
+    bool valid = false;
 
-            return valid;
-        }
-    }
+    // No need to validate size separately as an empty string won't have visible characters.
+    for (const char &c : patchName)
+        if (std::isalnum(c) || std::ispunct(c))
+            valid = true;
+        else if (c != ' ')
+            return false;
+
+    return valid;
 }
+
+#if WINDOWS
+std::string wstringToUTF8(const std::wstring &str)
+{
+    std::string ret;
+    int len = WideCharToMultiByte(CP_UTF8, 0, str.c_str(), str.length(), NULL, 0, NULL, NULL);
+    if (len > 0)
+    {
+        ret.resize(len);
+        WideCharToMultiByte(CP_UTF8, 0, str.c_str(), str.length(), &ret[0], len, NULL, NULL);
+    }
+    return ret;
+}
+#endif    
+    
+} // end ns Surge::Storage
+} // end ns Surge
+

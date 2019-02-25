@@ -8,7 +8,7 @@
 #include "UserInteractions.h"
 #if MAC
 #include "filesystem.h"
-#elif __linux__
+#elif LINUX
 #include "experimental/filesystem"
 #else
 #include "filesystem"
@@ -21,7 +21,7 @@ namespace fs = std::experimental::filesystem;
 const float disp_pitch = 90.15f - 48.f;
 const int wtbheight = 12;
 
-extern CFontRef surge_minifont;
+extern CFontRef displayFont;
 
 void COscillatorDisplay::draw(CDrawContext* dc)
 {
@@ -54,6 +54,11 @@ void COscillatorDisplay::draw(CDrawContext* dc)
       // srand(2);
       float disp_pitch_rs = disp_pitch + 12.0 * log2(dsamplerate / 44100.0);
       bool use_display = osc->allow_display();
+
+      // Mis-install check #2
+      if (uses_wavetabledata(oscdata->type.val.i) && storage->wt_list.size() == 0)
+          use_display = false;
+
       if (use_display)
          osc->init(disp_pitch_rs, true);
       int block_pos = BLOCK_SIZE_OS;
@@ -184,7 +189,7 @@ void COscillatorDisplay::draw(CDrawContext* dc)
       dc->setFillColor(fgcol);
       dc->drawRect(rmenu, kDrawFilled);
       dc->setFontColor(kBlackCColor);
-      dc->setFont(surge_minifont);
+      dc->setFont(displayFont);
       // strupr(wttxt);
       dc->drawString(wttxt, rmenu, kCenterText, false);
 

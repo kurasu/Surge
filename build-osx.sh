@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # build-osx.sh is the master script we use to control the multi-step build processes
 #
@@ -38,6 +38,7 @@ Commands are:
         --build-validate-au      Build and install the audio unit then validate it
         --build-install-vst2     Build and install only the VST2
         --build-install-vst3     Build and install only the VST3
+        --build-headless         Build the headless application
 
         --package                Creates a .pkg file from current built state in products
         --clean-and-package      Cleans everything; runs all the builds; makes an installer; drops it in products
@@ -181,11 +182,12 @@ run_all_builds()
 
     run_build "vst3"
     run_build "au"
+    run_build "headless"
 }
 
 run_install_local()
 {
-    rsync -r "resources/data/" "$HOME/Library/Application Support/Surge/"
+    rsync -r --delete "resources/data/" "$HOME/Library/Application Support/Surge/"
 
     if [ -d "surge-vst2.xcodeproj" ]; then
         rsync -r --delete "products/Surge.vst/" ~/Library/Audio/Plug-Ins/VST/Surge.vst/
@@ -200,7 +202,7 @@ run_build_validate_au()
     run_premake_if
     run_build "au"
 
-    rsync -r "resources/data/" "$HOME/Library/Application Support/Surge/"
+    rsync -r --delete "resources/data/" "$HOME/Library/Application Support/Surge/"
     rsync -r --delete "products/Surge.component/" ~/Library/Audio/Plug-Ins/Components/Surge.component/
 
     auval -vt aumu VmbA
@@ -211,7 +213,7 @@ run_build_install_vst2()
     run_premake_if
     run_build "vst2"
 
-    rsync -r "resources/data/" "$HOME/Library/Application Support/Surge/"
+    rsync -r --delete "resources/data/" "$HOME/Library/Application Support/Surge/"
     rsync -r --delete "products/Surge.vst/" ~/Library/Audio/Plug-Ins/VST/Surge.vst/
 }
 
@@ -220,7 +222,7 @@ run_build_install_vst3()
     run_premake_if
     run_build "vst3"
 
-    rsync -r "resources/data/" "$HOME/Library/Application Support/Surge/"
+    rsync -r --delete "resources/data/" "$HOME/Library/Application Support/Surge/"
     rsync -r --delete "products/Surge.vst3/" ~/Library/Audio/Plug-Ins/VST3/Surge.vst3/
 }
 
@@ -239,6 +241,7 @@ run_clean_builds()
 
     run_clean "vst3"
     run_clean "au"
+    run_clean "headless"
 }
 
 run_clean_all()
@@ -319,6 +322,10 @@ case $command in
         ;;
     --build-install-vst3)
         run_build_install_vst3
+        ;;
+    --build-headless)
+        run_premake_if
+        run_build "headless"
         ;;
     --clean)
         run_clean_builds

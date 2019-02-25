@@ -3,10 +3,14 @@
 #include "CSnapshotMenu.h"
 #include "effect/Effect.h"
 #include "SurgeBitmaps.h"
+#include "SurgeStorage.h" // for TINYXML macro
+
+#include <iostream>
+#include <iomanip>
 
 using namespace VSTGUI;
 
-extern CFontRef surge_minifont;
+extern CFontRef displayFont;
 
 // CSnapshotMenu
 
@@ -33,7 +37,6 @@ bool CSnapshotMenu::canSave()
 
 void CSnapshotMenu::populate()
 {
-   char txt[256];
    int main = 0, sub = 0;
    bool do_nothing = false;
    const long max_main = 16, max_sub = 256;
@@ -41,97 +44,122 @@ void CSnapshotMenu::populate()
    TiXmlElement* sect = storage->getSnapshotSection(mtype);
    if (sect)
    {
-      TiXmlElement* type = sect->FirstChild("type")->ToElement();
+      TiXmlElement* type = TINYXML_SAFE_TO_ELEMENT(sect->FirstChild("type"));
 
       while (type)
       {
-         int type_id = 0;
-         type->Attribute("i", &type_id);
-         sub = 0;
-         COptionMenu* subMenu = new COptionMenu(getViewSize(), 0, main, 0, 0, kNoDrawStyle);
-         TiXmlElement* snapshot = type->FirstChild("snapshot")->ToElement();
-         while (snapshot)
-         {
-            strcpy(txt, snapshot->Attribute("name"));
-
-            auto actionItem = new CCommandMenuItem(CCommandMenuItem::Desc(txt));
-            auto action = [this, snapshot, type_id](CCommandMenuItem* item) {
-               this->loadSnapshot(type_id, snapshot);
-            };
-
-            actionItem->setActions(action, nullptr);
-            subMenu->addEntry(actionItem);
-
-            snapshot = snapshot->NextSibling("snapshot")->ToElement();
-            sub++;
-            if (sub >= max_sub)
-               break;
-         }
-
-         strcpy(txt, type->Attribute("name"));
-         if (sub)
-         {
-            addEntry(subMenu, txt);
-         }
-         else
-         {
-             auto actionItem = new CCommandMenuItem(CCommandMenuItem::Desc(txt));
-            auto action = [this, type_id](CCommandMenuItem* item) {
-               this->loadSnapshot(type_id, nullptr);
-            };
-
-            actionItem->setActions(action, nullptr);
-            addEntry(actionItem);
-         }
-         subMenu->forget();
-
-         type = type->NextSibling("type")->ToElement();
-         main++;
-         if (main >= max_main)
-            break;
+          populateSubmenuFromTypeElement(type, this, main, sub, max_sub);
+          type = TINYXML_SAFE_TO_ELEMENT(type->NextSibling("type"));
+          main++;
+          if (main >= max_main)
+              break;
       }
+   }
+}
 
-      /*if (canSave())
+void CSnapshotMenu::populateSubmenuFromTypeElement(TiXmlElement *type, VSTGUI::COptionMenu *parent, int &main, int &sub, const long &max_sub)
+{
+    /*
+    ** Begin by grabbing all the snapshot elements
+    */
+    char txt[256];
+    int type_id = 0;
+    type->Attribute("i", &type_id);
+    sub = 0;
+    COptionMenu* subMenu = new COptionMenu(getViewSize(), 0, main, 0, 0, kNoDrawStyle);
+    TiXmlElement* snapshot = TINYXML_SAFE_TO_ELEMENT(type->FirstChild("snapshot"));
+    while (snapshot)
+    {
+        strcpy(txt, snapshot->Attribute("name"));
+
+        auto actionItem = new CCommandMenuItem(CCommandMenuItem::Desc(txt));
+        auto action = [this, snapshot, type_id](CCommandMenuItem* item) {
+            this->loadSnapshot(type_id, snapshot);
+        };
+
+        actionItem->setActions(action, nullptr);
+        subMenu->addEntry(actionItem);
+
+        snapshot = TINYXML_SAFE_TO_ELEMENT(snapshot->NextSibling("snapshot"));
+        sub++;
+        if (sub >= max_sub)
+            break;
+    }
+
+
+    /*
+    ** Next see if we have any subordinate types
+    */
+    TiXmlElement* subType = TINYXML_SAFE_TO_ELEMENT(type->FirstChild("type"));
+    if (subType)
+    {
+        populateSubmenuFromTypeElement(subType, subMenu, main, sub, max_sub);
+        subType = TINYXML_SAFE_TO_ELEMENT(subType->NextSibling("type"));
+    }
+        
+
+    /*
+    ** Then add myself to parent
+    */
+    strcpy(txt, type->Attribute("name"));
+    if (sub)
+    {
+        parent->addEntry(subMenu, txt);
+    }
+    else
+    {
+        auto actionItem = new CCommandMenuItem(CCommandMenuItem::Desc(txt));
+        auto action = [this, type_id](CCommandMenuItem* item) {
+            this->loadSnapshot(type_id, nullptr);
+        };
+
+        actionItem->setActions(action, nullptr);
+        parent->addEntry(actionItem);
+    }
+
+    subMenu->forget();
+
+    /*if (canSave())
       {
-         addEntry("-");
-         addEntry("Store Current");
+      addEntry("-");
+      addEntry("Store Current");
       }*/
-      /*
-      int32_t sel_id = contextMenu->getLastResult();
+    /*
+      int32_t sel_id = contextMenu->get Last Result();
+      this is commented so put in spaces so my grep to kill all these doesn't flag it PW
       int32_t sub_id, main_id;
       COptionMenu *b = contextMenu->getLastItemMenu(sub_id);
       if (b) main_id = b->getTag();
 
       if ((sel_id >= 0) && (sel_id < contextMenu->getNbEntries()))
       {
-         if (sel_id < main)
-         {
-            int type_id = 0; xpp[sel_id&(max_main - 1)]->Attribute("i", &type_id);		//
+      if (sel_id < main)
+      {
+      int type_id = 0; xpp[sel_id&(max_main - 1)]->Attribute("i", &type_id);		//
       get "i" value from xmldata load_snapshot(type_id, 0);
-         }
-         else
-         {
-            char name[NAMECHARS];
-            sprintf(name, "default");
+      }
+      else
+      {
+      char name[NAMECHARS];
+      sprintf(name, "default");
 
-            spawn_miniedit_text(name, NAMECHARS);
-            save_snapshot(sect, name);
-            storage->save_snapshots();
-            do_nothing = true;
-         }
+      spawn_miniedit_text(name, NAMECHARS);
+      save_snapshot(sect, name);
+      storage->save_snapshots();
+      do_nothing = true;
+      }
       }
       else if (b && within_range(0, main_id, max_main) && within_range(0, sub_id, max_sub))
       {
-         if (xp[main_id][sub_id])
-         {
-            int type_id = 0; xpp[main_id&(max_main - 1)]->Attribute("i", &type_id);		//
+      if (xp[main_id][sub_id])
+      {
+      int type_id = 0; xpp[main_id&(max_main - 1)]->Attribute("i", &type_id);		//
       get "i" value from xmldata
 
-            load_snapshot(type_id, xp[main_id][sub_id]);
-         }
+      load_snapshot(type_id, xp[main_id][sub_id]);
+      }
       }
       else do_nothing = true;*/
-   }
 }
 
 // COscMenu
@@ -225,7 +253,7 @@ void CFxMenu::draw(CDrawContext* dc)
    // dc->fillRect(f1); dc->fillRect(f2);
 
    dc->setFontColor(kBlackCColor);
-   dc->setFont(surge_minifont);
+   dc->setFont(displayFont);
    CRect txtbox(lbox);
    txtbox.inset(2, 2);
    dc->setFillColor(kWhiteCColor);
@@ -258,7 +286,7 @@ void CFxMenu::loadSnapshot(int type, TiXmlElement* e)
       fxbuffer->type.val.i = type;
    if (e)
    {
-      TiXmlElement* p = e->Parent()->ToElement();
+      TiXmlElement* p = TINYXML_SAFE_TO_ELEMENT(e->Parent());
       p->QueryIntAttribute("i", &type);
       assert(within_range(0, type, num_fxtypes));
       fxbuffer->type.val.i = type;
@@ -302,14 +330,14 @@ void CFxMenu::saveSnapshot(TiXmlElement* e, const char* name)
 {
    if (fx->type.val.i == 0)
       return;
-   TiXmlElement* t = e->FirstChild("type")->ToElement();
+   TiXmlElement* t = TINYXML_SAFE_TO_ELEMENT(e->FirstChild("type"));
    while (t)
    {
       int ii;
       if ((t->QueryIntAttribute("i", &ii) == TIXML_SUCCESS) && (ii == fx->type.val.i))
       {
          // if name already exists, delete old entry
-         TiXmlElement* sn = t->FirstChild("snapshot")->ToElement();
+         TiXmlElement* sn = TINYXML_SAFE_TO_ELEMENT(t->FirstChild("snapshot"));
          while (sn)
          {
             if (sn->Attribute("name") && !strcmp(sn->Attribute("name"), name))
@@ -317,7 +345,7 @@ void CFxMenu::saveSnapshot(TiXmlElement* e, const char* name)
                t->RemoveChild(sn);
                break;
             }
-            sn = sn->NextSibling("snapshot")->ToElement();
+            sn = TINYXML_SAFE_TO_ELEMENT(sn->NextSibling("snapshot"));
          }
 
          TiXmlElement neu("snapshot");
@@ -346,6 +374,6 @@ void CFxMenu::saveSnapshot(TiXmlElement* e, const char* name)
          t->InsertEndChild(neu);
          return;
       }
-      t = t->NextSibling("type")->ToElement();
+      t = TINYXML_SAFE_TO_ELEMENT(t->NextSibling("type"));
    }
 }

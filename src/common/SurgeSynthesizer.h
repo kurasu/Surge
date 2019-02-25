@@ -11,7 +11,6 @@ struct QuadFilterChainState;
 
 #include <list>
 #include <atomic>
-using namespace std;
 
 #if TARGET_AUDIOUNIT
 class aulayer;
@@ -22,6 +21,9 @@ typedef SurgeVst3Processor PluginLayer;
 #elif TARGET_VST2
 class Vst2PluginInstance;
 using PluginLayer = Vst2PluginInstance;
+#elif TARGET_HEADLESS
+class HeadlessPluginLayerProxy;
+using PluginLayer = HeadlessPluginLayerProxy;
 #else
 class PluginLayer;
 #endif
@@ -105,7 +107,7 @@ public:
 
    SurgeVoice* getUnusedVoice(int scene);
    void freeVoice(SurgeVoice*);
-   SurgeVoice* voices_array[2][MAX_VOICES];
+   std::array<std::array<SurgeVoice, MAX_VOICES>, 2> voices_array;
    unsigned int voices_usedby[2][MAX_VOICES]; // 0 indicates no user, 1 is scene A & 2 is scene B
 
    bool
@@ -146,8 +148,8 @@ public:
    void incrementPatch(bool nextPrev);
    void incrementCategory(bool nextPrev);
 
-   string getUserPatchDirectory();
-   string getLegacyUserPatchDirectory();
+   std::string getUserPatchDirectory();
+   std::string getLegacyUserPatchDirectory();
 
    void savePatch();
    void updateUsedState();
@@ -168,9 +170,9 @@ public:
 public:
    int CC0, PCH, patchid;
    float masterfade = 0;
-   HalfRateFilter *halfbandA, *halfbandB, *halfbandIN;
-   list<SurgeVoice*> voices[2];
-   Effect* fx[8];
+   HalfRateFilter halfbandA, halfbandB, halfbandIN;
+   std::list<SurgeVoice*> voices[2];
+   std::unique_ptr<Effect> fx[8];
    bool halt_engine = false;
    MidiChannelState channelState[16];
    bool mpeEnabled = false;
@@ -192,7 +194,7 @@ public:
 
    // hold pedal stuff
 
-   list<int> holdbuffer[2];
+   std::list<int> holdbuffer[2];
    void purgeHoldbuffer(int scene);
    quadr_osc sinus;
    int demo_counter = 0;

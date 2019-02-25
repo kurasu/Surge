@@ -10,7 +10,6 @@
 
 class CScalableBitmap : public VSTGUI::CBitmap
 {
-    
 public:
     CScalableBitmap(VSTGUI::CResourceDescription d);
 
@@ -36,7 +35,7 @@ public:
     ** which we apply to the BG Bitmap in Vst2PluginInstance::handleZoom.
     */
     void setExtraScaleFactor (int a) { extraScaleFactor = a; }
-    
+
 private:
     std::vector< int > scales;  // 100, 150, 200, 300 etc... - int percentages
     std::map< int, VSTGUI::CBitmap * > scaledBitmaps;

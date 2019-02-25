@@ -2,10 +2,10 @@
 //	Copyright 2006 Claes Johanson & Vember Audio
 //-------------------------------------------------------------------------------------------------------
 #include "Oscillator.h"
-#if !MAC && !__linux__
+#if !MAC && !LINUX
 #include <intrin.h>
 #endif
-#if __linux__
+#if LINUX
 #include <stdint.h>
 #endif
 
@@ -97,7 +97,7 @@ inline unsigned int BigMULr16(unsigned int a, unsigned int b)
 #if _M_X64
    unsigned __int64 c = __emulu(a, b);
    return c >> 16;
-#elif __linux__
+#elif LINUX
    uint64_t c = (uint64_t)a * (uint64_t)b;
    return c >> 16;
 #else
@@ -117,7 +117,7 @@ inline unsigned int BigMULr16(unsigned int a, unsigned int b)
 #endif
 }
 
-#if MAC || __linux__
+#if MAC || LINUX
 inline bool _BitScanReverse(unsigned long* result, unsigned long bits)
 {
    *result = __builtin_ctz(bits);
@@ -138,7 +138,7 @@ void WindowOscillator::ProcessSubOscs(bool stereo)
        (int)oscdata->wt.n_tables - 1);
    int FormantMul =
        (int)(float)(65536.f * note_to_pitch(localcopy[oscdata->p[1].param_id_in_scene].f));
-   FormantMul = max(FormantMul >> WindowVsWavePO2, 1);
+   FormantMul = std::max(FormantMul >> WindowVsWavePO2, 1);
    {
       // SSE2 path
       for (int so = 0; so < ActiveSubOscs; so++)

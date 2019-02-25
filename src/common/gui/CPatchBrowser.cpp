@@ -6,9 +6,10 @@
 #include <vector>
 
 using namespace VSTGUI;
+using namespace std;
 
-extern CFontRef surge_minifont;
-extern CFontRef surge_patchfont;
+extern CFontRef displayFont;
+extern CFontRef patchNameFont;
 
 void CPatchBrowser::draw(CDrawContext* dc)
 {
@@ -33,10 +34,10 @@ void CPatchBrowser::draw(CDrawContext* dc)
    // al.top += 2;
    al.bottom = al.top + 12;
    dc->setFontColor(kBlackCColor);
-   dc->setFont(surge_patchfont);
+   dc->setFont(patchNameFont);
    dc->drawString(pname.c_str(), ar, kCenterText, true);
 
-   dc->setFont(surge_minifont);
+   dc->setFont(displayFont);
    dc->drawString(category.c_str(), al, kLeftText, true);
    al.offset(0, 12);
    dc->drawString(author.c_str(), al, kLeftText, true);
@@ -59,23 +60,54 @@ CMouseEventResult CPatchBrowser::onMouseDown(CPoint& where, const CButtonState& 
    // if RMB is down, only show the current category
    bool single_category = button & (kRButton | kControl);
    int last_category = current_category;
+
    if (single_category)
+   {
       contextMenu->setNbItemsPerColumn(32);
 
-   for (int i = 0; i < storage->patch_category.size(); i++)
-   {
-      if ((!single_category) || (i == last_category))
+      /*
+      ** in the init scenario we don't have a category yet. Our two choices are 
+      ** don't pop up the menu or pick one. I choose to pick one. If I can
+      ** find the one called "Init" use that. Otherwise pick 0.
+      */
+      int rightMouseCategory = current_category;
+      if (current_category < 0)
       {
-         if (!single_category &&
-             ((i == storage->firstThirdPartyCategory) ||
-              (i == storage->firstUserCategory)))
-            contextMenu->addEntry("-");
+          if (storage->patchCategoryOrdering.size() == 0)
+              return kMouseEventHandled;
+          for (auto c : storage->patchCategoryOrdering)
+          {
+              if (_stricmp(storage->patch_category[c].name.c_str(),"init")==0)
+              {
+                  rightMouseCategory = c;;
+              }
 
-         // Remap index to the corresponding category in alphabetical order.
-         int c = storage->patchCategoryOrdering[i];
-
-         populatePatchMenuForCategory( c, contextMenu, single_category, main_e, true );
+          }
+          if (rightMouseCategory<0)
+          {
+              rightMouseCategory = storage->patchCategoryOrdering[0];
+          }
       }
+
+      populatePatchMenuForCategory(rightMouseCategory,contextMenu,single_category,main_e,true);
+   }
+   else
+   {
+       for (int i = 0; i < storage->patch_category.size(); i++)
+       {
+           if ((!single_category) || (i == last_category))
+           {
+               if (!single_category &&
+                   ((i == storage->firstThirdPartyCategory) ||
+                    (i == storage->firstUserCategory)))
+                   contextMenu->addEntry("-");
+
+               // Remap index to the corresponding category in alphabetical order.
+               int c = storage->patchCategoryOrdering[i];
+
+               populatePatchMenuForCategory( c, contextMenu, single_category, main_e, true );
+           }
+       }
    }
    // contextMenu->addEntry("refresh list");
 
@@ -84,13 +116,14 @@ CMouseEventResult CPatchBrowser::onMouseDown(CPoint& where, const CButtonState& 
    contextMenu->popup();
    getFrame()->removeView(contextMenu, true); // remove from frame and forget
 
-   return kMouseEventHandled;
+   return kMouseDownEventHandledButDontNeedMovedOrUpEvents;
 }
 
-void CPatchBrowser::populatePatchMenuForCategory( int c, COptionMenu *contextMenu, bool single_category, int &main_e, bool rootCall )
+bool CPatchBrowser::populatePatchMenuForCategory( int c, COptionMenu *contextMenu, bool single_category, int &main_e, bool rootCall )
 {
+    bool amIChecked = false;
     PatchCategory cat = storage->patch_category[ c ];
-    if (rootCall && ! cat.isRoot) return; // stop it going in the top menu which is a straight iteration
+    if (rootCall && ! cat.isRoot) return false; // stop it going in the top menu which is a straight iteration
     
     int splitcount = 256;
     // Go through the whole patch list in alphabetical order and filter
@@ -130,7 +163,10 @@ void CPatchBrowser::populatePatchMenuForCategory( int c, COptionMenu *contextMen
             auto action = [this, p](CCommandMenuItem* item) { this->loadPatch(p); };
             
             if (p == current_patch)
+            {
                 actionItem->setChecked(true);
+                amIChecked = true;
+            }
             actionItem->setActions(action, nullptr);
             subMenu->addEntry(actionItem);
             sub++;
@@ -145,12 +181,20 @@ void CPatchBrowser::populatePatchMenuForCategory( int c, COptionMenu *contextMen
                 if (cc.name == childcat.name) break;
                 idx++;
             }
-            populatePatchMenuForCategory( idx, subMenu, false, main_e, false );
+            bool checkedKid = populatePatchMenuForCategory( idx, subMenu, false, main_e, false );
+            if(checkedKid)
+            {
+                amIChecked=true;
+            }
         }
         
         std::string menuName = storage->patch_category[c].name;
-        if (menuName.find_last_of("/") != string::npos)
-            menuName = menuName.substr(menuName.find_last_of("/") + 1);
+        std::string pathSep = "/";
+#if WINDOWS
+        pathSep = "\\";
+#endif
+        if (menuName.find_last_of(pathSep) != string::npos)
+            menuName = menuName.substr(menuName.find_last_of(pathSep) + 1);
         
         if (n_subc > 1)
             sprintf(name, "%s - %i", menuName.c_str(), subc + 1);
@@ -160,12 +204,13 @@ void CPatchBrowser::populatePatchMenuForCategory( int c, COptionMenu *contextMen
         if (!single_category)
         {
             CMenuItem *entry = contextMenu->addEntry(subMenu, name);
-            if (c == current_category)
+            if (c == current_category || amIChecked)
                 entry->setChecked(true);
             subMenu->forget(); // Important, so that the refcounter gets it right
         }
         main_e++;
     }
+    return amIChecked;
 }
 
 void CPatchBrowser::loadPatch(int id)

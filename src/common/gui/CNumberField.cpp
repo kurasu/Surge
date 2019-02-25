@@ -15,7 +15,7 @@
 using namespace VSTGUI;
 
 const int width = 62, margin = 6, height = 8, vmargin = 1;
-extern CFontRef surge_minifont;
+extern CFontRef displayFont;
 
 using namespace std;
 
@@ -273,7 +273,7 @@ void CNumberField::draw(CDrawContext* pContext)
 
    pContext->setFrameColor(lineColor);
 
-   pContext->setFont(surge_minifont);
+   pContext->setFont(displayFont);
    // tempContext->fillRect(sze);
    /*if(!altlook)
    {
@@ -657,7 +657,21 @@ CMouseEventResult CNumberField::onMouseMoved(CPoint& where, const CButtonState& 
    }
    return kMouseEventHandled;
 }
-
+bool CNumberField::onWheel(const CPoint& where, const float& distance, const CButtonState& buttons)
+{
+   beginEdit();
+   i_value += int(distance);
+   int steps = i_max - i_min;
+   int offset = i_value - i_min;
+   float multiplier = 1.0f / (float) steps;
+   value = (float) offset * multiplier;
+   setIntValue(i_value); // also does bounceValue for i_value and value ..and setDirty
+   setValue(value);
+   if (isDirty() && listener)
+         listener->valueChanged(this);
+   endEdit();
+   return true;
+}
 //------------------------------------------------------------------------
 /*void CParamEdit::mouse (CDrawContext *pContext, CPoint &where, long buttons)
 {

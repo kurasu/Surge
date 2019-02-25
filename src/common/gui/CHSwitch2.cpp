@@ -76,7 +76,7 @@ CMouseEventResult CHSwitch2::onMouseUp(CPoint& where, const CButtonState& button
 }
 CMouseEventResult CHSwitch2::onMouseMoved(CPoint& where, const CButtonState& buttons)
 {
-   if (dragable && buttons != 0)
+   if (dragable && ( buttons.getButtonState() || ( buttons.getModifierState() & kShift ) ) )
    {
       auto mouseableArea = getMouseableArea();
       double coefX, coefY;
@@ -106,4 +106,27 @@ CMouseEventResult CHSwitch2::onMouseMoved(CPoint& where, const CButtonState& but
       return kMouseEventHandled;
    }
    return kMouseEventNotHandled;
+}
+bool CHSwitch2::onWheel(const CPoint& where, const float& distance, const CButtonState& buttons)
+{
+   float newVal=value;
+   float rate = 1.0f;
+   float range = getRange();
+   if (columns >1)
+   {
+      rate = range / (float)columns;
+      newVal += rate * distance;
+   }
+   else
+   {
+      rate = range / (float)rows;
+      newVal += rate * -distance; // flip distance (==direction) because it makes more sense when wheeling
+   }
+   beginEdit();
+   value = newVal;
+   bounceValue();
+   if (listener)
+      listener->valueChanged(this);
+   setValue(value);
+   return true;
 }

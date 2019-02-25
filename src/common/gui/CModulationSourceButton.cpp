@@ -7,8 +7,9 @@
 #include <vt_dsp/basic_dsp.h>
 
 using namespace VSTGUI;
+using namespace std;
 
-extern CFontRef surge_minifont;
+extern CFontRef displayFont;
 
 enum
 {
@@ -32,6 +33,7 @@ CModulationSourceButton::CModulationSourceButton(
    dispval = 0;
    controlstate = cs_none;
    label[0] = 0;
+   blink = 0;
 }
 
 //------------------------------------------------------------------------------------------------
@@ -152,7 +154,7 @@ void CModulationSourceButton::draw(CDrawContext* dc)
    CRect framer(sze);
    CRect fillr(framer);
    fillr.inset(1, 1);
-   dc->setFont(surge_minifont);
+   dc->setFont(displayFont);
    dc->setFontColor(FontCol);
    dc->setFrameColor(FrameCol);
    dc->setFillColor(FillCol);

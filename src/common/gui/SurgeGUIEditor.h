@@ -13,8 +13,13 @@ typedef VSTGUI::PluginGUIEditor EditorType;
 #include "public.sdk/source/vst/vstguieditor.h"
 typedef Steinberg::Vst::VSTGUIEditor EditorType;
 #elif TARGET_VST2
+#if LINUX
+#include "../linux/linux-aeffguieditor.h"
+typedef VSTGUI::LinuxAEffGUIEditor EditorType;
+#else
 #include <vstgui/plugin-bindings/aeffguieditor.h>
 typedef VSTGUI::AEffGUIEditor EditorType;
+#endif
 #else
 #include <vstgui/plugin-bindings/plugguieditor.h>
 typedef VSTGUI::PluginGUIEditor EditorType;
@@ -28,7 +33,6 @@ typedef VSTGUI::PluginGUIEditor EditorType;
 #include "SurgeSynthesizer.h"
 
 #include <vector>
-using namespace std;
 
 class SurgeGUIEditor : public EditorType, public VSTGUI::IControlListener, public VSTGUI::IKeyboardHook
 {
@@ -49,11 +53,12 @@ public:
    
 #if !TARGET_VST3
    bool open(void* parent) override;
+   void close() override;
 #else
    virtual bool PLUGIN_API open(void* parent, const VSTGUI::PlatformType& platformType = VSTGUI::kDefaultNative);
+   virtual void PLUGIN_API close() override;
 #endif
 
-   void close() override;
 
 protected:
    int32_t onKeyDown(const VstKeyCode& code,
@@ -72,15 +77,6 @@ protected:
    void controlEndEdit(VSTGUI::CControl* pControl) override;
 
    void refresh_mod();
-
-   /**
-    * getCurrentMouseLocationCorrectedForVSTGUIBugs
-    *
-    * This function gets the current mouse location for the frame
-    * but adds, in necessary cases, workarounds for bugs in the
-    * vstgui framework. Use it in place of frame->getCurrentMouseLocation
-    */
-   VSTGUI::CPoint getCurrentMouseLocationCorrectedForVSTGUIBugs();
 
 #if TARGET_VST3
 public:
@@ -135,8 +131,28 @@ private:
    void setZoomFactor(int zf);
 
 private:
-   std::function< void(SurgeGUIEditor *) > zoom_callback;
+   /**
+    * findLargestFittingZoomBetween
+    *
+    * Finds the largest zoom which will fit your current screen between a lower and upper bound.
+    * Will never return something smaller than lower or larger than upper. Default is as large as
+    * possible, quantized in units of zoomQuanta, with the maximum screen usage percentages
+    * protecting for screen real estate. The function also needs to know the 100% size of the UI
+    * the baseW and baseH)
+    *
+    * for instance findLargestFittingZoomBetween( 100, 200, 5, 90, bw, bh )
+    *
+    * would find the largest possible zoom which uses at most 90% of your screen real estate but
+    * would also guarantee that the result % 5 == 0.
+    */
+   int findLargestFittingZoomBetween(int zoomLow, int zoomHigh, int zoomQuanta, int percentageOfScreenAvailable,
+                                     float baseW, float baseH);
    
+private:
+   std::function< void(SurgeGUIEditor *) > zoom_callback;
+   bool zoomInvalid;
+   int minimumZoom;
+
    SurgeBitmaps bitmap_keeper;
 
    VSTGUI::CControl* vu[16];
@@ -155,7 +171,7 @@ private:
    VSTGUI::CControl* metaparam[n_customcontrollers] = {};
    VSTGUI::CControl* lfodisplay = nullptr;
    VSTGUI::CControl* filtersubtype[2] = {};
-#if MAC || __linux__
+#if MAC || LINUX
 #else
    HWND ToolTipWnd;
 #endif
@@ -164,8 +180,10 @@ private:
    bool blinkstate = false;
    void* _effect = nullptr;
    VSTGUI::CVSTGUITimer* _idleTimer = nullptr;
+
+   /*
+   ** Utility Function
+   */
+   void addCallbackMenu(VSTGUI::COptionMenu* toThis, std::string label, std::function<void()> op);
 };
 
-#if MAC || WINDOWS
-#define HOST_SUPPORTS_ZOOM 1
-#endif

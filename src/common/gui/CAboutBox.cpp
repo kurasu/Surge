@@ -40,8 +40,30 @@ void CAboutBox::draw(CDrawContext* pContext)
       _aboutBitmap->draw(pContext, getViewSize(), CPoint(0, 0), 0xff);
 
       int strHeight = infoFont->getSize(); // There should really be a better API for this in VSTGUI
+      std::string bittiness = (sizeof(size_t)==4? std::string("32") : std::string("64")) + " bit";
+
+#if TARGET_AUDIOUNIT      
+      std::string flavor = "au";
+#elif TARGET_VST3
+      std::string flavor = "vst3";
+#elif TARGET_VST2
+      std::string flavor = "vst2";
+#else
+      std::string flavor = "NON-PLUGIN"; // for linux app
+#endif      
+
+#if MAC
+      std::string platform = "macOS";
+#elif WINDOWS
+      std::string platform = "windows";
+#elif LINUX
+      std::string platform = "linux";
+#else
+      std::string platform = "orac or skynet or something";
+#endif      
+
       std::vector< std::string > msgs = { {
-              std::string() + "Version " + SURGE_STR(SURGE_VERSION) + " (build: " +
+              std::string() + "Version " + SURGE_STR(SURGE_VERSION) + " (" + bittiness + " " + platform + " " + flavor + ". Built " +
               __DATE__ + " " + __TIME__ + ")",
               "Released under the GNU General Public License, v3",
               "Copyright 2005-2019 by individual contributors",

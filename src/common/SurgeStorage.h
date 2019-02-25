@@ -10,14 +10,13 @@
 #include <vector>
 #include <thread/CriticalSection.h>
 #include <memory>
-using namespace std;
 
 #ifndef TIXML_USE_STL
 #define TIXML_USE_STL
 #endif
 #include <tinyxml.h>
 
-#if __linux__
+#if LINUX
 #include <experimental/filesystem>
 #elif MAC
 #include <filesystem.h>
@@ -369,8 +368,8 @@ struct SurgeSceneStorage
    Parameter feedback, filterblock_configuration, filter_balance;
    Parameter lowcut;
 
-   vector<ModulationRouting> modulation_scene, modulation_voice;
-   vector<ModulationSource*> modsources;
+   std::vector<ModulationRouting> modulation_scene, modulation_voice;
+   std::vector<ModulationSource*> modsources;
 
    bool modsource_doprocess[n_modsources];
 };
@@ -420,24 +419,24 @@ public:
 
    StepSequencerStorage stepsequences[2][n_lfos];
 
-   vector<Parameter*> param_ptr;
-   vector<int> easy_params_id;
+   std::vector<Parameter*> param_ptr;
+   std::vector<int> easy_params_id;
 
-   vector<ModulationRouting> modulation_global;
+   std::vector<ModulationRouting> modulation_global;
    pdata scenedata[2][n_scene_params];
    pdata globaldata[n_global_params];
    void* patchptr;
    SurgeStorage* storage;
 
    // metadata
-   string name, category, author, comment;
+   std::string name, category, author, comment;
    // metaparameters
    char CustomControllerLabel[n_customcontrollers][16];
 };
 
 struct Patch
 {
-   string name;
+   std::string name;
    fs::path path;
    int category;
    int order;
@@ -446,10 +445,12 @@ struct Patch
 
 struct PatchCategory
 {
-   string name;
+   std::string name;
    int order;
    std::vector<PatchCategory> children;
    bool isRoot;
+
+   int numberOfPatchesInCatgory;
 };
 
 enum sub3_copysource
@@ -495,13 +496,13 @@ public:
    float modsource_vu[n_modsources];
    void refresh_wtlist();
    void refresh_patchlist();
-   void refreshPatchlistAddDir(bool userDir, string subdir);
+   void refreshPatchlistAddDir(bool userDir, std::string subdir);
    void perform_queued_wtloads();
 
    void load_wt(int id, Wavetable* wt);
-   void load_wt(string filename, Wavetable* wt);
-   void load_wt_wt(string filename, Wavetable* wt);
-   void load_wt_wav(string filename, Wavetable* wt);
+   void load_wt(std::string filename, Wavetable* wt);
+   void load_wt_wt(std::string filename, Wavetable* wt);
+   void load_wt_wav(std::string filename, Wavetable* wt);
    void clipboard_copy(int type, int scene, int entry);
    void clipboard_paste(int type, int scene, int entry);
    int get_clipboard_type();
@@ -522,21 +523,22 @@ public:
    std::vector<int> wtOrdering;
    std::vector<int> wtCategoryOrdering;
 
-   string wtpath;
-   string datapath;
-   string userDataPath;
-   string defaultsig, defaultname;
+   std::string wtpath;
+   std::string datapath;
+   std::string userDataPath;
+   std::string defaultsig, defaultname;
    // float table_sin[512],table_sin_offset[512];
    CriticalSection CS_WaveTableData, CS_ModRouting;
    Wavetable WindowWT;
 
 private:
    TiXmlDocument snapshotloader;
-   vector<Parameter> clipboard_p;
+   std::vector<Parameter> clipboard_p;
    int clipboard_type;
    StepSequencerStorage clipboard_stepsequences[n_lfos];
-   vector<ModulationRouting> clipboard_modulation_scene, clipboard_modulation_voice;
+   std::vector<ModulationRouting> clipboard_modulation_scene, clipboard_modulation_voice;
    Wavetable clipboard_wt[n_oscs];
+
 };
 
 float note_to_pitch(float);
@@ -552,6 +554,22 @@ namespace Surge
 {
 namespace Storage
 {
-    bool isValidName(const std::string &name);
+bool isValidName(const std::string &name);
+
+#if WINDOWS
+/*
+** Windows filesystem names are properly wstrings which, if we want them to
+** display properly in vstgui, need to be converted to UTF8 using the
+** windows widechar API. Linux and Mac do not require this.
+*/
+std::string wstringToUTF8(const std::wstring &ws);
+#endif
 }
 }
+
+/*
+** ToElement does a this && check to check nulls. (As does ToDocument and so on).
+** gcc -O3 on linux optimizes that away giving crashes. So do this instead
+** See github issue #469
+*/
+#define TINYXML_SAFE_TO_ELEMENT(expr) ((expr)?(expr)->ToElement():NULL)

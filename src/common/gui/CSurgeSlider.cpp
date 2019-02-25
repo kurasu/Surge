@@ -8,8 +8,9 @@
 #include "SurgeBitmaps.h"
 
 using namespace VSTGUI;
+using namespace std;
 
-extern CFontRef surge_minifont;
+extern CFontRef displayFont;
 
 enum
 {
@@ -204,7 +205,7 @@ void CSurgeSlider::draw(CDrawContext* dc)
          dc->setFontColor(kWhiteCColor);
       else
          dc->setFontColor(kBlackCColor);
-      dc->setFont(surge_minifont);
+      dc->setFont(displayFont);
 
       //		int a = 'a' + (rand()&31);
       //		label[1] = a;
@@ -433,4 +434,37 @@ void CSurgeSlider::setBipolar(bool b)
       style &= ~kBipolar;
 
    setDirty();
+}
+bool CSurgeSlider::onWheel(const VSTGUI::CPoint& where, const float &distance, const VSTGUI::CButtonState& buttons)
+{
+   // shift + scrollwheel for fine control
+   double rate = 0.1 * moverate;
+   if (buttons & kShift)
+      rate *= 0.05;
+   
+   edit_value = modmode ? &modval : &value;
+   oldVal = *edit_value;
+   
+   beginEdit();
+   *edit_value += rate * distance;
+   bounceValue();
+   if (modmode)
+   {
+      setModValue(*edit_value);
+   }
+   else
+   {
+      setValue(value);
+   }
+   setDirty();
+   if (isDirty() && listener)
+      listener->valueChanged(this);
+   //endEdit();
+   /*
+   ** No need to call endEdit since the timer in SurgeGUIEditor will close the
+   ** info window, and  SurgeGUIEditor will make sure a window
+   ** doesn't appear twice
+   */
+   edit_value = nullptr;
+   return true;   
 }
