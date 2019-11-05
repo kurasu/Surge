@@ -1,2 +1,4 @@
-#include <vstgui/vstgui.h>
+#pragma once
+
+#include "vstgui/vstgui.h"
 #include <CCursorHidingControl.h>

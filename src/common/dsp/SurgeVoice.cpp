@@ -53,13 +53,16 @@ SurgeVoice::SurgeVoice(SurgeStorage* storage,
                        float detune,
                        MidiKeyState* keyState,
                        MidiChannelState* mainChannelState,
-                       MidiChannelState* voiceChannelState)
+                       MidiChannelState* voiceChannelState,
+                       bool mpeEnabled
+    )
 //: fb(storage,oscene)
 {
    // assign pointers
    this->storage = storage;
    this->scene = oscene;
    this->paramptr = params;
+   this->mpeEnabled = mpeEnabled;
    assert(storage);
    assert(oscene);
 
@@ -68,9 +71,14 @@ SurgeVoice::SurgeVoice(SurgeStorage* storage,
    age = 0;
    age_release = 0;
    state.key = key;
-   state.velocity = velocity;
    state.channel = channel;
+
+   state.velocity = velocity;
    state.fvel = velocity / 127.f;
+
+   state.releasevelocity = 0;
+   state.freleasevel = 0;
+   
    state.scene_id = scene_id;
    state.detune = detune;
    state.uberrelease = false;
@@ -122,11 +130,15 @@ SurgeVoice::SurgeVoice(SurgeStorage* storage,
       modsources[ms_lfo1 + i] = &lfo[i];
    }
    modsources[ms_velocity] = &velocitySource;
+   modsources[ms_releasevelocity] = &releaseVelocitySource;
    modsources[ms_keytrack] = &keytrackSource;
    modsources[ms_polyaftertouch] = &polyAftertouchSource;
    polyAftertouchSource.init(storage->poly_aftertouch[state.scene_id & 1][state.key & 127]);
+
    velocitySource.output = state.fvel;
+   releaseVelocitySource.output = state.freleasevel;
    keytrackSource.output = 0;
+   
    ampEGSource.init(storage, &scene->adsr[0], localcopy, &state);
    filterEGSource.init(storage, &scene->adsr[1], localcopy, &state);
    modsources[ms_ampeg] = &ampEGSource;
@@ -299,6 +311,7 @@ void SurgeVoice::release()
       lfo[i].release();
 
    state.gate = false;
+   releaseVelocitySource.output = state.releasevelocity / 127.0f;
 }
 
 void SurgeVoice::uber_release()
@@ -377,9 +390,35 @@ template <bool first> void SurgeVoice::calc_ctrldata(QuadFilterChainState* Q, in
       int src_id = iter->source_id;
       int dst_id = iter->destination_id;
       float depth = iter->depth;
+
       if (modsources[src_id])
+      {
          localcopy[dst_id].f += depth * modsources[src_id]->output;
+      }
       iter++;
+   }
+
+   if( mpeEnabled )
+   {
+       // See github issue 1214. This basically compensates for
+       // channel AT being per-voice in MPE mode (since it is per channel)
+       // vs per-scene (since it is per keyboard in non MPE mode).
+       iter = scene->modulation_scene.begin();
+       while( iter != scene->modulation_scene.end() )
+       {
+           int src_id = iter->source_id;
+           if( src_id == ms_aftertouch && modsources[src_id] )
+           {
+               int dst_id = iter->destination_id;
+               // I don't THINK we need this but am not sure the global params are in my localcopy span
+               if( dst_id >= 0 && dst_id < n_scene_params )
+               {
+                   float depth = iter->depth;
+                   localcopy[dst_id].f += depth * modsources[src_id]->output;
+               }
+           }
+           iter++;
+       }
    }
 
    update_portamento();
@@ -490,10 +529,9 @@ bool SurgeVoice::process_block(QuadFilterChainState& Q, int Qe)
    if (osc3 || ring23 || ((osc1 || osc2) && (FMmode == fm_3to2to1)) ||
        (osc1 && (FMmode == fm_2and3to1)))
    {
-      osc[2]->process_block((scene->osc[2].keytrack.val.b ? state.pitch : ktrkroot) +
-                                localcopy[scene->osc[2].pitch.param_id_in_scene].f *
-                                    (scene->osc[2].pitch.extend_range ? 12.f : 1.f) +
-                                12 * scene->osc[2].octave.val.i,
+       osc[2]->process_block(noteShiftFromPitchParam( (scene->osc[2].keytrack.val.b ? state.pitch : ktrkroot) +
+                                                      12 * scene->osc[2].octave.val.i,
+                                                      2 ),
                             drift, is_wide);
 
       if (osc3)
@@ -518,19 +556,18 @@ bool SurgeVoice::process_block(QuadFilterChainState& Q, int Qe)
    {
       if (FMmode == fm_3to2to1)
       {
-         osc[1]->process_block((scene->osc[1].keytrack.val.b ? state.pitch : ktrkroot) +
-                                   localcopy[scene->osc[1].pitch.param_id_in_scene].f *
-                                       (scene->osc[1].pitch.extend_range ? 12.f : 1.f) +
-                                   12 * scene->osc[1].octave.val.i,
+          osc[1]->process_block(noteShiftFromPitchParam((scene->osc[1].keytrack.val.b ? state.pitch : ktrkroot) +
+                                                        12 * scene->osc[1].octave.val.i,
+                                                        1 ),
+                               
                                drift, is_wide, true,
                                db_to_linear(localcopy[scene->fm_depth.param_id_in_scene].f));
       }
       else
       {
-         osc[1]->process_block((scene->osc[1].keytrack.val.b ? state.pitch : ktrkroot) +
-                                   localcopy[scene->osc[1].pitch.param_id_in_scene].f *
-                                       (scene->osc[1].pitch.extend_range ? 12.f : 1.f) +
-                                   12 * scene->osc[1].octave.val.i,
+          osc[1]->process_block(noteShiftFromPitchParam((scene->osc[1].keytrack.val.b ? state.pitch : ktrkroot) +
+                                                        12 * scene->osc[1].octave.val.i,
+                                                        1),
                                drift, is_wide);
       }
       if (osc2)
@@ -557,28 +594,25 @@ bool SurgeVoice::process_block(QuadFilterChainState& Q, int Qe)
       if (FMmode == fm_2and3to1)
       {
          add_block(osc[1]->output, osc[2]->output, fmbuffer, BLOCK_SIZE_OS_QUAD);
-         osc[0]->process_block((scene->osc[0].keytrack.val.b ? state.pitch : ktrkroot) +
-                                   localcopy[scene->osc[0].pitch.param_id_in_scene].f *
-                                       (scene->osc[0].pitch.extend_range ? 12.f : 1.f) +
-                                   12 * scene->osc[0].octave.val.i,
+         osc[0]->process_block(noteShiftFromPitchParam((scene->osc[0].keytrack.val.b ? state.pitch : ktrkroot) +
+                                                       12 * scene->osc[0].octave.val.i, 0 ),
                                drift, is_wide, true,
                                db_to_linear(localcopy[scene->fm_depth.param_id_in_scene].f));
       }
       else if (FMmode)
       {
-         osc[0]->process_block((scene->osc[0].keytrack.val.b ? state.pitch : 60) +
-                                   localcopy[scene->osc[0].pitch.param_id_in_scene].f *
-                                       (scene->osc[0].pitch.extend_range ? 12.f : 1.f) +
-                                   12 * scene->osc[0].octave.val.i,
+          osc[0]->process_block(noteShiftFromPitchParam((scene->osc[0].keytrack.val.b ? state.pitch : 60) +
+                                                        12 * scene->osc[0].octave.val.i,
+                                                        0),
+
                                drift, is_wide, true,
                                db_to_linear(localcopy[scene->fm_depth.param_id_in_scene].f));
       }
       else
       {
-         osc[0]->process_block((scene->osc[0].keytrack.val.b ? state.pitch : ktrkroot) +
-                                   localcopy[scene->osc[0].pitch.param_id_in_scene].f *
-                                       (scene->osc[0].pitch.extend_range ? 12.f : 1.f) +
-                                   12 * scene->osc[0].octave.val.i,
+         osc[0]->process_block(noteShiftFromPitchParam((scene->osc[0].keytrack.val.b ? state.pitch : ktrkroot) +
+                                                       12 * scene->osc[0].octave.val.i,
+                                                       0),
                                drift, is_wide);
       }
       if (osc1)
@@ -763,10 +797,10 @@ void SurgeVoice::SetQFB(QuadFilterChainState* Q, int e) // Q == 0 means init(ial
          cutoffB += cutoffA;
 
       CM[0].MakeCoeffs(cutoffA, localcopy[id_resoa].f, scene->filterunit[0].type.val.i,
-                       scene->filterunit[0].subtype.val.i);
+                       scene->filterunit[0].subtype.val.i, storage);
       CM[1].MakeCoeffs(
           cutoffB, scene->f2_link_resonance.val.b ? localcopy[id_resoa].f : localcopy[id_resob].f,
-          scene->filterunit[1].type.val.i, scene->filterunit[1].subtype.val.i);
+          scene->filterunit[1].type.val.i, scene->filterunit[1].subtype.val.i, storage);
 
       for (int u = 0; u < 2; u++)
       {
@@ -842,4 +876,13 @@ void SurgeVoice::GetQFB()
    FBP.FBlineL = get1f(fbq->FBlineL, fbqi);
    FBP.FBlineR = get1f(fbq->FBlineR, fbqi);
    FBP.wsLPF = get1f(fbq->wsLPF, fbqi);
+}
+
+void SurgeVoice::freeAllocatedElements()
+{
+   for(int i=0;i<3;++i)
+   {
+      osc[i].reset(nullptr);
+      osctype[i] = -1;
+   }
 }

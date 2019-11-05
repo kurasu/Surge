@@ -90,6 +90,10 @@ public:
       delete cdisurf;
    }
    virtual void draw(VSTGUI::CDrawContext* dc);
+   void drawVectorized(VSTGUI::CDrawContext* dc);
+   void drawBitmap(VSTGUI::CDrawContext* dc);
+
+   void invalidateIfIdIsInRange(int id);
 
 protected:
    LFOStorage* lfodata;
@@ -104,6 +108,7 @@ protected:
    VSTGUI::CRect ss_shift_left, ss_shift_right;
    bool edit_trigmask;
    int controlstate;
-
+   bool ignore_bitmap_pref = false; // if this is true, we always use the bitmap
+   
    CLASS_METHODS(CLFOGui, VSTGUI::CControl)
 };

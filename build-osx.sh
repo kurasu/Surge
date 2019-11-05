@@ -40,6 +40,9 @@ Commands are:
         --build-install-vst3     Build and install only the VST3
         --build-headless         Build the headless application
 
+        --get-and-build-fx       Get and build the surge-fx project. This is only needed if you
+                                 want to make a release with that asset included
+
         --package                Creates a .pkg file from current built state in products
         --clean-and-package      Cleans everything; runs all the builds; makes an installer; drops it in products
                                  Equivalent of running --clean-all then --build then --package
@@ -94,6 +97,15 @@ prerequisite_check()
         exit 1
     fi
 
+    if [ ! $(which cmake) ]; then
+        echo
+        echo ${RED}ERROR: You do not have cmake on your path${NC}
+        echo
+	echo Please install cmake. "brew install cmake" or visit https://cmake.org
+        echo
+        exit 1
+    fi
+
     if [[ ( ! -z $SURGE_USE_VECTOR_SKIN ) && ( ! -d assets/${SURGE_USE_VECTOR_SKIN}/exported ) ]]; then
         echo
         echo ${RED}SURGE_USE_VECTOR_SKIN does not point to assets${NC}
@@ -107,7 +119,15 @@ prerequisite_check()
 
 run_premake()
 {
-    premake5 xcode4
+    if [[ -z $SURGE_PREMAKE ]]; then
+        premake5 xcode4
+    else
+        echo
+        echo ${RED}Using custom premake binary${NC}
+        echo $SURGE_PREMAKE
+        echo
+        $SURGE_PREMAKE xcode4
+    fi 
     touch Surge.xcworkspace/premake-stamp
 }
 
@@ -124,6 +144,15 @@ run_clean()
     echo
     echo "Cleaning build - $flavor"
     xcodebuild clean -configuration Release -project surge-${flavor}.xcodeproj
+}
+
+run_clean_headless()
+{
+    if [ -d "build/Surge.xcodeproj" ]; then
+        echo
+        echo "Cleaning build - headless"
+        xcodebuild clean -configuration Release -project build/Surge.xcodeproj
+    fi
 }
 
 run_build()
@@ -158,6 +187,44 @@ run_build()
     fi
 }
 
+run_build_headless()
+{
+    mkdir -p build_logs
+
+    echo
+    echo Building surge-headless with output in build_logs/build_headless.log
+
+    mkdir -p build
+    cmake -GXcode -Bbuild
+
+    # Don't let TEE eat my return status
+    set -o pipefail
+    if [[ -z "$OPTION_verbose" ]]; then
+        xcodebuild build -configuration Release \
+                         -project build/Surge.xcodeproj > \
+                         build_logs/build_headless.log
+    else
+        xcodebuild build -configuration Release \
+                         -project build/Surge.xcodeproj | \
+                         tee build_logs/build_headless.log
+    fi
+
+    build_suc=$?
+    set +o pipefail
+
+    if [[ $build_suc = 0 ]]; then
+        echo ${GREEN}Build of surge-headless succeeded${NC}
+    else
+        echo
+        echo ${RED}** Build of headless failed**${NC}
+        grep -i ": error" build_logs/build_headless.log
+        echo
+        echo Complete information is in build_logs/build_headless.log
+
+        exit 2
+    fi
+}
+
 default_action()
 {
     run_premake
@@ -182,7 +249,7 @@ run_all_builds()
 
     run_build "vst3"
     run_build "au"
-    run_build "headless"
+    run_build_headless
 }
 
 run_install_local()
@@ -241,7 +308,7 @@ run_clean_builds()
 
     run_clean "vst3"
     run_clean "au"
-    run_clean "headless"
+    run_clean_headless
 }
 
 run_clean_all()
@@ -249,7 +316,7 @@ run_clean_all()
     run_clean_builds
 
     echo "Cleaning additional assets (directories, XCode, etc)"
-    rm -rf Surge.xcworkspace *xcodeproj target products build_logs obj
+    rm -rf Surge.xcworkspace *xcodeproj target products build_logs obj build fxbuild
 }
 
 run_uninstall_surge()
@@ -280,6 +347,21 @@ run_package()
     echo
     echo "Have a lovely day!"
     echo
+}
+
+get_and_build_fx()
+{
+    set -x
+    mkdir -p fxbuild
+    mkdir -p products
+    cd fxbuild
+    git clone https://github.com/surge-synthesizer/surge-fx
+    cd surge-fx
+    git submodule update --init --recursive
+    make -f Makefile.mac build
+    cd Builds/MacOSX/build/Release
+    tar cf - SurgeEffectsBank.component/* | ( cd ../../../../../../products ; tar xf - )
+    tar cf - SurgeEffectsBank.vst3/* | ( cd   ../../../../../../products ; tar xf - )
 }
 
 # This is the main section of the script
@@ -324,8 +406,11 @@ case $command in
         run_build_install_vst3
         ;;
     --build-headless)
-        run_premake_if
-        run_build "headless"
+        run_build_headless
+        ;;
+    --run-headless)
+        run_build_headless
+        ./build/Release/surge-headless 
         ;;
     --clean)
         run_clean_builds
@@ -343,6 +428,9 @@ case $command in
         ;;
     --uninstall-surge)
         run_uninstall_surge
+        ;;
+    --get-and-build-fx)
+        get_and_build_fx
         ;;
     "")
         default_action

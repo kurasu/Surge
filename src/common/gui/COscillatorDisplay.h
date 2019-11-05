@@ -7,7 +7,9 @@
 #include "CDIBitmap.h"
 #include "DspUtilities.h"
 
-class COscillatorDisplay : public VSTGUI::CControl
+#define OSC_MOD_ANIMATION 0
+
+class COscillatorDisplay : public VSTGUI::CControl, public VSTGUI::IDropTarget
 {
 public:
    COscillatorDisplay(const VSTGUI::CRect& size, OscillatorStorage* oscdata, SurgeStorage* storage)
@@ -16,6 +18,7 @@ public:
       this->oscdata = oscdata;
       this->storage = storage;
       controlstate = 0;
+
       cdisurf = new CDIBitmap(getWidth(), getHeight());
 
       int bgcol = 0xff161616;
@@ -29,9 +32,6 @@ public:
       f_bgcol[2] = ((bgcol >> 16) & 0xff) * sc;
       f_fgcol[2] = ((fgcol >> 16) & 0xff) * sc;
 
-      /*f_bgcol[0] = powf(f_bgcol[0],2.2f);
-      f_bgcol[1] = powf(f_bgcol[1],2.2f);
-      f_bgcol[2] = powf(f_bgcol[2],2.2f);*/
       f_fgcol[0] = powf(f_fgcol[0], 2.2f);
       f_fgcol[1] = powf(f_fgcol[1], 2.2f);
       f_fgcol[2] = powf(f_fgcol[2], 2.2f);
@@ -39,12 +39,6 @@ public:
       for (int i = 0; i < 256; i++)
       {
          float x = i * sc;
-         // unsigned int a = limit_range((unsigned int)((float)255.f*powf(x,1.f/2.2f)),0,255);
-         /*unsigned int a = limit_range((int)((float)255.f*powf(x*f_fgcol[0] +
-         (1.f-x)*f_bgcol[0],1.f/2.2f)),0,255); unsigned int b =
-         limit_range((int)((float)255.f*powf(x*f_fgcol[1] + (1.f-x)*f_bgcol[1],1.f/2.2f)),0,255);
-         unsigned int c = limit_range((int)((float)255.f*powf(x*f_fgcol[2] +
-         (1.f-x)*f_bgcol[2],1.f/2.2f)),0,255);			*/
          unsigned int r =
              limit_range((int)((float)255.f * (1.f - (1.f - powf(x * f_fgcol[0], 1.f / 2.2f)) *
                                                          (1.f - f_bgcol[0]))),
@@ -60,12 +54,11 @@ public:
          unsigned int a = 0xff;
 
 #if MAC
-          // MAC uses a different raw pixel byte order than windows
-          coltable[ i ] = ( b << 8 ) | ( g << 16 ) | ( r << 24 ) | a;
+         // MAC uses a different raw pixel byte order than windows
+         coltable[i] = (b << 8) | (g << 16) | (r << 24) | a;
 #else
-          coltable[i] = r | (g << 8) | (b << 16) | (a << 24);
+         coltable[i] = r | (g << 8) | (b << 16) | (a << 24);
 #endif
-
       }
    }
    virtual ~COscillatorDisplay()
@@ -73,20 +66,74 @@ public:
       delete cdisurf;
    }
    virtual void draw(VSTGUI::CDrawContext* dc);
-   virtual bool onDrop(VSTGUI::IDataPackage* drag, const VSTGUI::CPoint& where);
+   void drawBitmap(VSTGUI::CDrawContext* dc);
+   void drawVector(VSTGUI::CDrawContext* dc);
+
+   virtual VSTGUI::DragOperation onDragEnter(VSTGUI::DragEventData data) override
+   {
+       doingDrag = true;
+       /* invalid();
+          setDirty(true); */
+
+       return VSTGUI::DragOperation::Copy;
+   }
+   virtual VSTGUI::DragOperation onDragMove(VSTGUI::DragEventData data) override
+   {
+       return VSTGUI::DragOperation::Copy;
+   }
+   virtual void onDragLeave(VSTGUI::DragEventData data) override
+   {
+       doingDrag = false;
+       /* invalid();
+          setDirty(true); */
+   }
+   virtual bool onDrop(VSTGUI::DragEventData data) override;
+   
+   virtual VSTGUI::SharedPointer<VSTGUI::IDropTarget> getDropTarget () override { return this; }
 
    void loadWavetable(int id);
+   void loadWavetableFromFile();
 
    // virtual void mouse (CDrawContext *pContext, VSTGUI::CPoint &where, long button = -1);
    virtual VSTGUI::CMouseEventResult onMouseDown(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons);
    virtual VSTGUI::CMouseEventResult onMouseUp(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons);
    virtual VSTGUI::CMouseEventResult onMouseMoved(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons);
 
+   void invalidateIfIdIsInRange(int id);
+   
+#if OSC_MOD_ANIMATION
+   void setIsMod(bool b)
+   {
+      is_mod = b;
+      mod_time = 0;
+   }
+   void setModSource(modsources m)
+   {
+       modsource = m;
+   }
+   void tickModTime()
+   {
+      mod_time += 1.0 / 30.0;
+   }
+#endif
+
 protected:
+   void populateMenu(VSTGUI::COptionMenu* m, int selectedItem);
+   bool populateMenuForCategory(VSTGUI::COptionMenu* parent, int categoryId, int selectedItem);
+
    OscillatorStorage* oscdata;
    SurgeStorage* storage;
-   unsigned int coltable[256], controlstate;
+   unsigned int controlstate;
+   unsigned int coltable[256];
    CDIBitmap* cdisurf;
+
+   bool doingDrag = false;
+
+#if OSC_MOD_ANIMATION
+   bool is_mod = false;
+   modsources modsource = ms_original;
+   float mod_time = 0;
+#endif
    VSTGUI::CRect rnext, rprev, rmenu;
    VSTGUI::CPoint lastpos;
    CLASS_METHODS(COscillatorDisplay, VSTGUI::CControl)

@@ -14,7 +14,15 @@ struct QuadFilterChainState
 
    __m128 OutL, OutR, dOutL, dOutR;
    __m128 Out2L, Out2R, dOut2L, dOut2R; // fb_stereo only
+
 };
+
+/*
+** I originally had this as a member but since moved it out of line so as to
+** not run any risk of alignment problems in QuadFilterChainState where
+** only the head of the array is __align_malloced
+*/
+void InitQuadFilterChainStateToZero(QuadFilterChainState *Q);
 
 struct fbq_global
 {

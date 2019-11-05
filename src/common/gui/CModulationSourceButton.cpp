@@ -3,8 +3,10 @@
 #include "MouseCursorControl.h"
 #include "globals.h"
 #include "ModulationSource.h"
+#include "CScalableBitmap.h"
 #include "SurgeBitmaps.h"
 #include <vt_dsp/basic_dsp.h>
+#include <iostream>
 
 using namespace VSTGUI;
 using namespace std;
@@ -19,8 +21,12 @@ enum
 
 //------------------------------------------------------------------------------------------------
 
-CModulationSourceButton::CModulationSourceButton(
-    const CRect& size, IControlListener* listener, long tag, int state, int msid)
+CModulationSourceButton::CModulationSourceButton(const CRect& size,
+                                                 IControlListener* listener,
+                                                 long tag,
+                                                 int state,
+                                                 int msid,
+                                                 std::shared_ptr<SurgeBitmaps> bitmapStore)
     : CCursorHidingControl(size, listener, tag, 0), OldValue(0.f)
 {
    this->state = state;
@@ -34,6 +40,7 @@ CModulationSourceButton::CModulationSourceButton(
    controlstate = cs_none;
    label[0] = 0;
    blink = 0;
+   bmp = bitmapStore->getBitmap(IDB_MODSRC_BG);
 }
 
 //------------------------------------------------------------------------------------------------
@@ -166,7 +173,15 @@ void CModulationSourceButton::draw(CDrawContext* dc)
    dc->drawRect(framer, kDrawFilled);
    dc->setFillColor(FillCol);
    dc->drawRect(fillr, kDrawFilled);
-   dc->drawString(label, txtbox, kCenterText, true);
+
+   if( hasAlternate && useAlternate )
+   {
+      dc->drawString(alternateLabel.c_str(), txtbox, kCenterText, true);
+   }
+   else
+   {
+      dc->drawString(label, txtbox, kCenterText, true);
+   }
 
    if (is_metacontroller)
    {
@@ -223,7 +238,7 @@ void CModulationSourceButton::draw(CDrawContext* dc)
          where.y = 8 * rh;
       else
          where.y = 7 * rh;
-      getSurgeBitmap(IDB_MODSRC_BG)->draw(dc, sze, where, 0xff);
+      bmp->draw(dc, sze, where, 0xff);
    }
 
    setDirty(false);
@@ -251,10 +266,24 @@ CMouseEventResult CModulationSourceButton::onMouseDown(CPoint& where, const CBut
    }
 
    if (listener &&
-       buttons & (kAlt | kRButton | kMButton | kShift | kControl | kApple | kDoubleClick))
+       buttons & (kAlt | kRButton | kMButton | kButton4 | kButton5 | kShift | kControl | kApple | kDoubleClick))
    {
       if (listener->controlModifierClicked(this, buttons) != 0)
          return kMouseDownEventHandledButDontNeedMovedOrUpEvents;
+   }
+
+   if (is_metacontroller && (buttons & kDoubleClick) && MCRect.pointInside(where) && !controlstate)
+   {
+      if (bipolar)
+         value = 0.5;
+      else
+         value = 0;
+
+      invalid();
+      if (listener)
+         listener->valueChanged(this);
+
+      return kMouseDownEventHandledButDontNeedMovedOrUpEvents;
    }
 
    if (is_metacontroller && MCRect.pointInside(where) && (buttons & kLButton) && !controlstate)
@@ -320,6 +349,33 @@ double CModulationSourceButton::getMouseDeltaScaling(CPoint& where, const CButto
       scaling *= 0.1;
 
    return scaling;
+}
+
+bool CModulationSourceButton::onWheel(const VSTGUI::CPoint& where, const float &distance, const VSTGUI::CButtonState& buttons)
+{
+    if( ! is_metacontroller )
+        return false;
+    
+    auto rate = 1.f;
+
+#if WINDOWS
+    // This is purely empirical. The wheel for this control feels slow on windows
+    // but fine on a macos trackpad. I callibrated it by making sure the trackpad
+    // across the pad gesture on my macbook pro moved the control the same amount
+    // in surge mac as it does in vst3 bitwig in parallels.
+    rate = 10.f;
+#endif      
+
+    if( buttons & kShift )
+      rate *= 0.05;
+    
+    value += rate * distance / (double)(getWidth());
+    value = limit_range(value, 0.f, 1.f);
+    event_is_drag = true;
+    invalid();
+    if (listener)
+        listener->valueChanged(this);
+    return true;
 }
 
 //------------------------------------------------------------------------------------------------

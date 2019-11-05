@@ -5,6 +5,7 @@
 #include "resource.h"
 #include "DspUtilities.h"
 #include "MouseCursorControl.h"
+#include "CScalableBitmap.h"
 #include "SurgeBitmaps.h"
 
 using namespace VSTGUI;
@@ -18,8 +19,14 @@ enum
    cs_drag = 1,
 };
 
-CSurgeSlider::CSurgeSlider(
-    const CPoint& loc, long stylee, IControlListener* listener, long tag, bool is_mod)
+CSurgeSlider::MoveRateState CSurgeSlider::sliderMoveRateState = kUnInitialized;
+
+CSurgeSlider::CSurgeSlider(const CPoint& loc,
+                           long stylee,
+                           IControlListener* listener,
+                           long tag,
+                           bool is_mod,
+                           std::shared_ptr<SurgeBitmaps> bitmapStore)
     : CCursorHidingControl(CRect(loc, CPoint(1, 1)), listener, tag, 0)
 {
    this->style = stylee;
@@ -46,12 +53,15 @@ CSurgeSlider::CSurgeSlider(
    has_modulation = false;
    has_modulation_current = false;
 
+   restvalue = 0.0f;
+   restmodval = 0.0f;
+
    CRect size;
 
    if (style & CSlider::kHorizontal)
    {
-      pTray = getSurgeBitmap(IDB_FADERH_BG);
-      pHandle = getSurgeBitmap(IDB_FADERH_HANDLE);
+      pTray = bitmapStore->getBitmap(IDB_FADERH_BG);
+      pHandle = bitmapStore->getBitmap(IDB_FADERH_HANDLE);
 
       if (style & kWhite)
          typehy = 1;
@@ -67,8 +77,8 @@ CSurgeSlider::CSurgeSlider(
       if (!(style & CSlider::kTop))
          style |= CSlider::kBottom; // CSlider::kBottom by default
 
-      pTray = getSurgeBitmap(IDB_FADERV_BG);
-      pHandle = getSurgeBitmap(IDB_FADERV_HANDLE);
+      pTray = bitmapStore->getBitmap(IDB_FADERV_BG);
+      pHandle = bitmapStore->getBitmap(IDB_FADERV_HANDLE);
 
       if (style & kWhite)
          typehy = 0;
@@ -284,17 +294,36 @@ void CSurgeSlider::draw(CDrawContext* dc)
    setDirty(false);
 }
 
-void CSurgeSlider::bounceValue()
+void CSurgeSlider::bounceValue(const bool keeprest)
 {
-   if (value > vmax)
-      value = vmax;
-   else if (value < vmin)
-      value = vmin;
+    if (keeprest) {
+        if (restvalue!=0.0f) {
+            value += restvalue;
+            restvalue = 0.0f;
+        }
+        if (restmodval!=0.0f) {
+            modval += restmodval;
+            restmodval = 0.0f;
+        }
+    }
 
-   if (modval > 1.f)
-      modval = 1.f;
-   if (modval < -1.f)
-      modval = -1.f;
+   if (value > vmax) {
+      restvalue = value - vmax;
+      value = vmax;
+   }
+   else if (value < vmin) {
+      restvalue = value - vmin;
+      value = vmin;
+   }
+
+   if (modval > 1.f) {
+       restmodval = modval - 1.f;
+       modval = 1.f;
+   }
+   if (modval < -1.f) {
+       restmodval = modval - (-1.f);
+       modval = -1.f;
+   }
 }
 
 bool CSurgeSlider::isInMouseInteraction()
@@ -317,7 +346,7 @@ CMouseEventResult CSurgeSlider::onMouseDown(CPoint& where, const CButtonState& b
    }
 
    if (listener &&
-       buttons & (kAlt | kRButton | kMButton | kShift | kControl | kApple | kDoubleClick))
+       buttons & (kAlt | kRButton | kMButton | kButton4 | kButton5 | kShift | kControl | kApple | kDoubleClick))
    {
       if (listener->controlModifierClicked(this, buttons) != 0)
          return kMouseEventHandled;
@@ -331,6 +360,9 @@ CMouseEventResult CSurgeSlider::onMouseDown(CPoint& where, const CButtonState& b
 
       edit_value = modmode ? &modval : &value;
       oldVal = *edit_value;
+
+      restvalue = 0.f;
+      restmodval = 0.f;
 
       detachCursor(where);
       return kMouseEventHandled;
@@ -363,7 +395,24 @@ CMouseEventResult CSurgeSlider::onMouseUp(CPoint& where, const CButtonState& but
 
 double CSurgeSlider::getMouseDeltaScaling(CPoint& where, const CButtonState& buttons)
 {
-   double rate = 0.3 * moverate;
+   double rate;
+
+   switch (CSurgeSlider::sliderMoveRateState)
+   {
+   case kSlow:
+      rate = 0.3;
+      break;
+   case kMedium:
+      rate = 0.7;
+      break;
+   case kExact:
+      rate = 1.0;
+      break;
+   case kClassic:
+   default:
+      rate = 0.3 * moverate;
+      break;
+   }
 
    if (buttons & kRButton)
       rate *= 0.1;
@@ -397,7 +446,7 @@ void CSurgeSlider::onMouseMoveDelta(CPoint& where,
 
       *edit_value += diff / (float)range;
 
-      bounceValue();
+      bounceValue(!(sliderMoveRateState==MoveRateState::kClassic));
 
       setDirty();
 
@@ -466,5 +515,5 @@ bool CSurgeSlider::onWheel(const VSTGUI::CPoint& where, const float &distance, c
    ** doesn't appear twice
    */
    edit_value = nullptr;
-   return true;   
+   return true;
 }

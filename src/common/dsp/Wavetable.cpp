@@ -48,23 +48,20 @@ bool _BitScanReverse(unsigned int* result, unsigned int bits)
 
 //! Calculate the worst-case scenario of the needed samples for a specific wavetable and see if it
 //! fits
-bool CheckRequiredWTSize(int TableSize, int TableCount)
+size_t RequiredWTSize(int TableSize, int TableCount)
 {
    int Size = 0;
 
+   TableCount += 3; // for sample padding. Should match the "3" in the AppendSilence block below.
    while (TableSize > 0)
    {
       Size += TableCount * (TableSize + FIRoffsetI16 + FIRipolI16_N);
 
       TableSize = TableSize >> 1;
    }
-
-   if (Size > max_wtable_samples)
-   {
-      return false;
-   }
-   return true;
+   return Size;
 }
+
 
 int GetWTIndex(int WaveIdx, int WaveSize, int NumWaves, int MipMap, int Padding = 0)
 {
@@ -81,13 +78,33 @@ int GetWTIndex(int WaveIdx, int WaveSize, int NumWaves, int MipMap, int Padding 
 
 Wavetable::Wavetable()
 {
-   memset(TableF32Data, 0, sizeof(TableF32Data));
-   memset(TableI16Data, 0, sizeof(TableI16Data));
+   dataSizes = 35000;
+   TableF32Data = (float *)malloc(dataSizes * sizeof(float));
+   TableI16Data = (short *)malloc(dataSizes * sizeof(short));
+   memset(TableF32Data, 0, dataSizes * sizeof(float));
+   memset(TableI16Data, 0, dataSizes * sizeof(short));
    memset(TableF32WeakPointers, 0, sizeof(TableF32WeakPointers));
    memset(TableI16WeakPointers, 0, sizeof(TableI16WeakPointers));
    current_id = -1;
    queue_id = -1;
    refresh_display = true; // I have never been drawn so assume I need refresh if asked
+}
+
+Wavetable::~Wavetable()
+{
+    free(TableF32Data);
+    free(TableI16Data);
+}
+
+void Wavetable::allocPointers(size_t newSize)
+{
+   free(TableF32Data);
+   free(TableI16Data);
+   dataSizes = newSize;
+   TableF32Data = (float *)malloc(dataSizes * sizeof(float));
+   TableI16Data = (short *)malloc(dataSizes * sizeof(short));
+   memset(TableF32Data, 0, dataSizes * sizeof(float));
+   memset(TableI16Data, 0, dataSizes * sizeof(short));
 }
 
 void Wavetable::Copy(Wavetable* wt)
@@ -101,8 +118,13 @@ void Wavetable::Copy(Wavetable* wt)
    current_id = -1;
    queue_id = -1;
 
-   memcpy(TableF32Data, wt->TableF32Data, sizeof(TableF32Data));
-   memcpy(TableI16Data, wt->TableI16Data, sizeof(TableI16Data));
+   if( dataSizes < wt->dataSizes )
+   {
+       allocPointers(wt->dataSizes);
+   }
+
+   memcpy(TableF32Data, wt->TableF32Data, dataSizes * sizeof(float));
+   memcpy(TableI16Data, wt->TableI16Data, dataSizes * sizeof(short));
 
    for (int i = 0; i < max_mipmap_levels; i++)
    {
@@ -135,16 +157,18 @@ bool Wavetable::BuildWT(void* wdata, wt_header& wh, bool AppendSilence)
    n_tables = vt_read_int16LE(wh.n_tables);
    size = vt_read_int32LE(wh.n_samples);
 
-   if (!CheckRequiredWTSize(size, n_tables))
+   size_t req_size = RequiredWTSize(size, n_tables);
+   
+   if (req_size > dataSizes)
    {
-      return false;
+       allocPointers(req_size);
    }
 
    int wdata_tables = n_tables;
 
    if (AppendSilence)
    {
-      n_tables += 3;
+       n_tables += 3; // this "3" should match the "3" in RequiredWTSize
    }
 
 #if WINDOWS

@@ -121,6 +121,30 @@ public:
       return (float)op;
    }
 
+   inline void process_sample(float L, float R, float& lOut, float& rOut)
+   {
+      a1.process();
+      a2.process();
+      b0.process();
+      b1.process();
+      b2.process();
+
+      double op;
+      double input = L;
+      op = input * b0.v.d[0] + reg0.d[0];
+      reg0.d[0] = input * b1.v.d[0] - a1.v.d[0] * op + reg1.d[0];
+      reg1.d[0] = input * b2.v.d[0] - a2.v.d[0] * op;
+
+      lOut = op;
+
+      input = R;
+      op = input * b0.v.d[0] + reg0.d[1];
+      reg0.d[1] = input * b1.v.d[0] - a1.v.d[0] * op + reg1.d[1];
+      reg1.d[1] = input * b2.v.d[0] - a2.v.d[0] * op;
+
+      rOut = op;
+   }
+
    inline void process_sample_nolag(float& L, float& R)
    {
       double op;
@@ -170,7 +194,7 @@ public:
    // 440*powf(2,scfreq)*samplerate_inv); }
    double calc_omega(double scfreq)
    {
-      return (2 * 3.14159265358979323846) * 440 * note_to_pitch((float)(12.f * scfreq)) *
+      return (2 * 3.14159265358979323846) * 440 * storage->note_to_pitch((float)(12.f * scfreq)) *
              dsamplerate_inv;
    }
    static double calc_omega_from_Hz(double Hz)

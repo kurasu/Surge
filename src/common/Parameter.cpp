@@ -6,6 +6,9 @@
 #include "DspUtilities.h"
 #include <string.h>
 #include <math.h>
+#include <iomanip>
+#include <sstream>
+#include <string>
 
 Parameter::Parameter()
 {
@@ -142,6 +145,7 @@ void Parameter::clear_flags()
    temposync = false;
    extend_range = false;
    absolute = false;
+   snap = false;
 }
 
 bool Parameter::can_temposync()
@@ -162,7 +166,10 @@ bool Parameter::can_extend_range()
    switch (ctrltype)
    {
    case ct_pitch_semi7bp:
+   case ct_pitch_semi7bp_absolutable:
    case ct_freq_shift:
+   case ct_decibel_extendable:
+   case ct_decibel_narrow_extendable:
       return true;
    }
    return false;
@@ -173,9 +180,41 @@ bool Parameter::can_be_absolute()
    switch (ctrltype)
    {
    case ct_oscspread:
+   case ct_pitch_semi7bp_absolutable:
       return true;
    }
    return false;
+}
+
+bool Parameter::can_snap()
+{
+   switch (ctrltype)
+   {
+   case ct_countedset_percent:
+      return true;
+   }
+   return false;
+}
+
+void Parameter::set_user_data(ParamUserData* ud)
+{
+   switch (ctrltype)
+   {
+   case ct_countedset_percent:
+      if (dynamic_cast<CountedSetUserData*>(ud))
+      {
+         user_data = ud;
+      }
+      else
+      {
+         user_data = nullptr;
+      }
+      break;
+   default:
+      std::cerr << "Setting userdata on a non-supporting param ignored" << std::endl;
+      user_data = nullptr;
+      break;
+   }
 }
 
 void Parameter::set_type(int ctrltype)
@@ -185,6 +224,7 @@ void Parameter::set_type(int ctrltype)
    this->moverate = 1.f;
 
    affect_other_parameters = false;
+   user_data = nullptr;
    switch (ctrltype)
    {
    case ct_pitch:
@@ -219,6 +259,7 @@ void Parameter::set_type(int ctrltype)
       val_default.i = 2;
       break;
    case ct_pitch_semi7bp:
+   case ct_pitch_semi7bp_absolutable:
       valtype = vt_float;
       val_min.f = -7;
       val_max.f = 7;
@@ -236,7 +277,19 @@ void Parameter::set_type(int ctrltype)
       valtype = vt_float;
       val_min.f = -72;
       val_max.f = 15;
-      val_default.f = -72;
+      val_default.f = -18;
+      break;
+   case ct_freq_vocoder_low:
+      valtype = vt_float;
+      val_min.f = -36; // 55hz
+      val_max.f = 36; // 3520 hz
+      val_default.f = -3;
+      break;
+   case ct_freq_vocoder_high:
+      valtype = vt_float;
+      val_min.f = 0; // 440 hz
+      val_max.f = 60; // ~14.3 khz
+      val_default.f = 49; // ~7.4khz
       break;
    case ct_freq_mod:
       valtype = vt_float;
@@ -258,6 +311,7 @@ void Parameter::set_type(int ctrltype)
       val_default.f = 1;
       break;
    case ct_decibel:
+   case ct_decibel_extendable:
       valtype = vt_float;
       val_min.f = -48;
       val_max.f = 48;
@@ -282,6 +336,7 @@ void Parameter::set_type(int ctrltype)
       val_default.f = 0;
       break;
    case ct_decibel_narrow:
+   case ct_decibel_narrow_extendable:
       valtype = vt_float;
       val_min.f = -24;
       val_max.f = 24;
@@ -435,7 +490,7 @@ void Parameter::set_type(int ctrltype)
    case ct_wstype:
       valtype = vt_int;
       val_min.i = 0;
-      val_max.i = n_ws_type - 1;
+      val_max.i = n_ws_type - 1; 
       val_default.i = 0;
       break;
    case ct_midikey:
@@ -522,6 +577,36 @@ void Parameter::set_type(int ctrltype)
       valtype = vt_int;
       val_default.i = 1;
       break;
+   case ct_sineoscmode:
+      val_min.i = 0;
+      val_max.i = 8;
+      valtype = vt_int;
+      val_default.i = 0;
+      break;
+   case ct_sinefmlegacy:
+      val_min.i = 0;
+      val_max.i = 1;
+      valtype = vt_int;
+      val_default.i = 0;
+      break;
+   case ct_vocoder_bandcount:
+      val_min.i = 4;
+      val_max.i = 20;
+      valtype = vt_int;
+      val_default.i = 20;
+      break;
+   case ct_distortion_waveshape:
+      val_min.i = 0;
+      val_max.i = n_ws_type - 2; // we want to skip none also
+      valtype = vt_int;
+      val_default.i = 0;
+      break;
+   case ct_countedset_percent:
+      val_min.f = 0;
+      val_max.f = 1;
+      valtype = vt_float;
+      val_default.f = 0;
+      break;
    default:
    case ct_none:
       sprintf(dispname, "-");
@@ -551,6 +636,7 @@ void Parameter::bound_value(bool force_integer)
       if (b > 1.41f)
       {
          b = log(1.5f) / log(2.f);
+          
       }
       else if (b > 1.167f)
       {
@@ -570,6 +656,21 @@ void Parameter::bound_value(bool force_integer)
       val.f = floor(val.f + 0.5f);
    }
 
+   if (snap && ctrltype == ct_countedset_percent && user_data)
+   {
+      CountedSetUserData* cs = reinterpret_cast<CountedSetUserData*>(user_data);
+      auto count = cs->getCountedSetSize();
+      // OK so now val.f is between 0 and 1. So
+      auto fraccount = val.f * count;
+      auto intcount = (int)fraccount;
+      val.f = 1.0 * intcount / count;
+   }
+
+   if( ctrltype == ct_vocoder_bandcount )
+   {
+       val.i = val.i - val.i % 4;
+   }
+   
    switch (valtype)
    {
    case vt_float:
@@ -605,14 +706,20 @@ char* Parameter::get_storage_value(char* str)
 {
    switch (valtype)
    {
-   case vt_float:
-      sprintf(str, "%f", val.f);
-      break;
    case vt_int:
       sprintf(str, "%i", val.i);
       break;
    case vt_bool:
       sprintf(str, "%i", val.b ? 1 : 0);
+      break;
+   case vt_float:
+      std::stringstream sst;
+      sst.imbue(std::locale::classic());
+      sst << std::fixed;
+      sst << std::showpoint;
+      sst << std::setprecision(6);
+      sst << val.f;
+      strncpy(str, sst.str().c_str(),15);
       break;
    };
 
@@ -651,10 +758,99 @@ float Parameter::get_extended(float f)
    case ct_freq_shift:
       return 100.f * f;
    case ct_pitch_semi7bp:
+   case ct_pitch_semi7bp_absolutable:
       return 12.f * f;
+   case ct_decibel_extendable:
+      return 3.f * f;
+   case ct_decibel_narrow_extendable:
+      return 5.f * f;
    default:
       return f;
    }
+}
+
+std::string Parameter::tempoSyncNotationValue(float f)
+{
+    float a, b = modff(f, &a);
+    
+    if (b >= 0)
+    {
+        b -= 1.0;
+        a += 1.0;
+    }
+
+    float d, q;
+    std::string nn, t;
+    char tmp[1024];
+    
+    if(f >= 1)
+    {
+        q = pow(2.0, f - 1);
+        nn = "whole";
+        if(q >= 3)
+        {
+            snprintf(tmp, 1024, "%.2f whole notes", q);
+            std::string res = tmp;
+            return res;
+        }
+        else if(q >= 2)
+        {
+            nn = "double whole";
+            q /= 2;
+        }
+
+        if(q < 1.3)
+        {
+            t = "note";
+        }
+        else if(q < 1.4)
+        {
+            t = "triplet";
+            if (nn == "whole")
+            {
+                nn = "1/2";
+            }
+            else
+            {
+                nn = "whole";
+            }
+        }
+        else
+        {
+            t = "dotted";
+        }
+    }
+    else
+    {
+        d = pow(2.0, -(a - 2));
+        q = pow(2.0, (b+1));
+        if (q < 1.3)
+        {
+            t = "note";
+        }
+        else if(q < 1.4)
+        {
+            t = "triplet";
+            d = d / 2;
+        }
+        else
+        {
+            t = "dotted";
+        }
+        if ( d == 1 )
+        {
+            nn = "whole";
+        }
+        else
+        {
+            char tmp[1024];
+            snprintf(tmp, 1024, "1/%0.d", (int)d, d );
+            nn = tmp;
+        }
+    }
+    std::string res = nn + " " + t;
+
+    return res;
 }
 
 void Parameter::get_display(char* txt, bool external, float ef)
@@ -691,14 +887,8 @@ void Parameter::get_display(char* txt, bool external, float ef)
          {
             if (temposync)
             {
-               if (f > 1)
-                  sprintf(txt, "%.3f bars", 0.5f * powf(2.0f, f));
-               else if (f > -1)
-                  sprintf(txt, "%.3f / 4th", 2.0f * powf(2.0f, f));
-               else if (f > -3)
-                  sprintf(txt, "%.3f / 16th", 8.0f * powf(2.0f, f));
-               else
-                  sprintf(txt, "%.3f / 64th", 32.0f * powf(2.0f, f));
+               std::string res = tempoSyncNotationValue(f);
+               sprintf( txt, "%s", res.c_str() );
             }
             else if (f == val_min.f)
             {
@@ -713,20 +903,8 @@ void Parameter::get_display(char* txt, bool external, float ef)
       case ct_lforate:
          if (temposync)
          {
-            if (f > 4)
-               sprintf(txt, "%.3f / 64th", 32.f * powf(2.0f, -f));
-            else if (f > 3)
-               sprintf(txt, "%.3f / 32th", 16.f * powf(2.0f, -f));
-            else if (f > 2)
-               sprintf(txt, "%.3f / 16th", 8.f * powf(2.0f, -f));
-            else if (f > 1)
-               sprintf(txt, "%.3f / 8th", 4.f * powf(2.0f, -f));
-            else if (f > 0)
-               sprintf(txt, "%.3f / 4th", 2.f * powf(2.0f, -f));
-            else if (f > -1)
-               sprintf(txt, "%.3f / 2th", 1.f * powf(2.0f, -f));
-            else
-               sprintf(txt, "%.3f bars", 0.5f * powf(2.0f, -f));
+            std::string res = tempoSyncNotationValue(-f);
+            sprintf(txt, "%s", res.c_str() );
          }
          else
             sprintf(txt, "%.3f Hz", powf(2.0f, f));
@@ -745,6 +923,10 @@ void Parameter::get_display(char* txt, bool external, float ef)
       case ct_decibel_extra_narrow:
          sprintf(txt, "%.2f dB", f);
          break;
+      case ct_decibel_extendable:
+      case ct_decibel_narrow_extendable:
+         sprintf(txt, "%.2f dB", get_extended(f));
+         break;
       case ct_bandwidth:
          sprintf(txt, "%.2f octaves", f);
          break;
@@ -754,6 +936,21 @@ void Parameter::get_display(char* txt, bool external, float ef)
       case ct_percent:
       case ct_percent_bidirectional:
          sprintf(txt, "%.1f %c", f * 100.f, '%');
+         break;
+      case ct_countedset_percent:
+         if (user_data == nullptr)
+         {
+            sprintf(txt, "%.1f %c", f * 100.f, '%');
+         }
+         else
+         {
+            // We check when set so the reinterpret cast is safe and fast
+            CountedSetUserData* cs = reinterpret_cast<CountedSetUserData*>(user_data);
+            auto count = cs->getCountedSetSize();
+            auto tl = count * f;
+            sprintf(txt, "%.1f%% (%.1f / %d)", f * 100.f, tl, count);
+         }
+
          break;
       case ct_oscspread:
          if (absolute)
@@ -769,13 +966,21 @@ void Parameter::get_display(char* txt, bool external, float ef)
          break;
       case ct_freq_hpf:
       case ct_freq_audible:
+      case ct_freq_vocoder_low:
+      case ct_freq_vocoder_high:
          sprintf(txt, "%.3f Hz", 440.f * powf(2.0f, f / 12.f));
          break;
       case ct_freq_mod:
          sprintf(txt, "%.2f semitones", f);
          break;
       case ct_pitch_semi7bp:
-         sprintf(txt, "%.2f", get_extended(f));
+          sprintf(txt, "%.2f", get_extended(f));
+          break;
+      case ct_pitch_semi7bp_absolutable:
+         if(absolute)
+             sprintf(txt, "%.1f Hz", 10 * get_extended(f));
+         else
+             sprintf(txt, "%.2f", get_extended(f));
          break;
       default:
          sprintf(txt, "%.2f", f);
@@ -830,6 +1035,44 @@ void Parameter::get_display(char* txt, bool external, float ef)
          break;
       case ct_character:
          sprintf(txt, "%s", character_abberations[limit_range(i, 0, (int)n_charactermodes - 1)]);
+         break;
+      case ct_sineoscmode:
+         // FIXME - do better than this of course
+         sprintf(txt, "%d", i);
+         break;
+      case ct_sinefmlegacy:
+         if( i == 0 )
+             sprintf( txt, "Legacy (1.6.1.1 and earlier)");
+         else
+             sprintf( txt, "Consistent w. FM2/3" );
+         break;
+      case ct_vocoder_bandcount:
+         sprintf(txt, "%d bands", i);
+         break;
+      case ct_distortion_waveshape:
+         // FIXME - do better than this of course
+         switch( i + 1 )
+         {
+         case wst_tanh:
+            sprintf(txt,"tanh");
+            break;
+         case wst_hard:
+            sprintf(txt,"hard");
+            break;
+         case wst_asym:
+            sprintf(txt,"asym");
+            break;
+         case wst_sinus:
+            sprintf(txt,"sin");
+            break;
+         case wst_digi:
+            sprintf(txt,"digi");
+            break;
+         default:
+         case wst_none:
+            sprintf(txt,"none");
+            break;
+         }
          break;
       case ct_oscroute:
          switch (i)

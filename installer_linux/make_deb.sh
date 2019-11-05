@@ -41,8 +41,10 @@ PACKAGE_NAME="$SURGE_NAME"
 rm -rf ${PACKAGE_NAME} product
 mkdir -p ${PACKAGE_NAME}/usr/lib/vst
 mkdir -p ${PACKAGE_NAME}/usr/lib/vst3
+mkdir -p ${PACKAGE_NAME}/usr/lib/lv2
 mkdir -p ${PACKAGE_NAME}/usr/share/${SURGE_NAME}/doc
 mkdir -p ${PACKAGE_NAME}/DEBIAN
+chmod -R 0755 ${PACKAGE_NAME}
 
 # build control file
 
@@ -55,7 +57,7 @@ Package: ${PACKAGE_NAME}
 Version: $DEB_VERSION
 Architecture: amd64
 Maintainer: surgeteam
-Depends:libcairo2, libxkbcommon-x11-0, libxcb-util1, libxcb-cursor0
+Depends: libcairo2, libfontconfig1, libfreetype6, libx11-6, libxcb-cursor0, libxcb-util1, libxcb-xkb1, libxcb1, libxkbcommon-x11-0, libxkbcommon0, fonts-lato, xdg-utils, zenity
 Provides: vst-plugin
 Section: sound
 Priority: optional
@@ -80,7 +82,10 @@ cp -r ../resources/data/* ${PACKAGE_NAME}/usr/share/${SURGE_NAME}/
 cp ../target/vst2/Release/Surge.so ${PACKAGE_NAME}/usr/lib/vst/${SURGE_NAME}.so
 
 # Once VST3 works, this will be ../products/vst3
-# cp ../target/vst3/Release/Surge.so ${PACKAGE_NAME}/usr/lib/vst3/${SURGE_NAME}.so
+cp -r ../products/Surge.vst3 ${PACKAGE_NAME}/usr/lib/vst3/
+
+#copy the lv2 bundle
+cp -r ../target/lv2/Release/Surge.lv2 ${PACKAGE_NAME}/usr/lib/lv2/
 
 #build package
 

@@ -3,6 +3,8 @@
 //-------------------------------------------------------------------------------------------------------
 #include "CLFOGui.h"
 #include "LfoModulationSource.h"
+#include "UserDefaults.h"
+#include <chrono>
 
 using namespace VSTGUI;
 using namespace std;
@@ -34,6 +36,36 @@ void drawtri(CRect r, CDrawContext* context, int orientation)
 
 void CLFOGui::draw(CDrawContext* dc)
 {
+#if LINUX
+   /*
+   ** As of 1.6.2, the linux vectorized drawing is slow and scales imporoperly with zoom, so
+   ** return to the original bitmap drawing until we resolve. See issue #1103.
+   ** 
+   ** Also some older machines report performance problems so make it switchable
+   */
+   drawBitmap(dc);
+#else
+   auto useBitmap = Surge::Storage::getUserDefaultValue(storage, "useBitmapLFO", 0 );
+   if( ignore_bitmap_pref || useBitmap )
+   {
+        drawBitmap(dc);
+   }
+   else
+   {
+       auto start = std::chrono::high_resolution_clock::now();
+       drawVectorized(dc);
+       auto end = std::chrono::high_resolution_clock::now();
+       std::chrono::duration<double> elapsed_seconds = end-start;
+
+       // If this draw takes more than, say, 1/10th of a second, our GPU is too slow. 
+       if( elapsed_seconds.count() > 0.1 )
+           ignore_bitmap_pref = true;
+   }
+#endif
+}
+
+void CLFOGui::drawVectorized(CDrawContext* dc)
+{
    assert(lfodata);
    assert(storage);
    assert(ss);
@@ -48,17 +80,17 @@ void CLFOGui::draw(CDrawContext* dc)
    maindisp.top += 1;
    maindisp.bottom -= 1;
 
-   cdisurf->begin();
-#if MAC
-    cdisurf->clear(0x0090ffff);
-#else
-   cdisurf->clear(0xffff9000);
-#endif
-   int w = cdisurf->getWidth();
-   int h = cdisurf->getHeight();
-
    if (ss && lfodata->shape.val.i == ls_stepseq)
    {
+       cdisurf->begin();
+#if MAC
+       cdisurf->clear(0x0090ffff);
+#else
+       cdisurf->clear(0xffff9000);
+#endif
+       int w = cdisurf->getWidth();
+       int h = cdisurf->getHeight();
+
        // I know I could do the math to convert these colors but I would rather leave them as literals for the compiler
        // so we don't have to shift them at runtime. See issue #141 in surge github
 #if MAC
@@ -75,6 +107,410 @@ void CLFOGui::draw(CDrawContext* dc)
        int grabMarker = PIX_COL( 0x00087f00, 0x007f08ff ); // Surely you can't mean this to be fully transparent?
        // But leave non-mac unch
        
+      for (int i = 0; i < n_stepseqsteps; i++)
+      {
+         CRect rstep(maindisp), gstep;
+         rstep.offset(-size.left - splitpoint, -size.top);
+         rstep.left += scale * i;
+         rstep.right = rstep.left + scale - 1;
+         rstep.bottom -= margin2 + 1;
+         CRect shadow(rstep);
+         shadow.inset(-1, -1);
+         cdisurf->fillRect(shadow, skugga);
+         if (edit_trigmask)
+         {
+            gstep = rstep;
+            rstep.top += margin2;
+            gstep.bottom = rstep.top - 1;
+            gaterect[i] = gstep;
+            gaterect[i].offset(size.left + splitpoint, size.top);
+
+            if (ss->trigmask & (1 << i))
+               cdisurf->fillRect(gstep, stepMarker);
+            else if ((i >= ss->loop_start) && (i <= ss->loop_end))
+               cdisurf->fillRect(gstep, (i & 3) ? loopRegionHi : loopRegionLo);
+            else
+               cdisurf->fillRect(gstep, (i & 3) ? noLoopHi : noLoopLo);
+         }
+         if ((i >= ss->loop_start) && (i <= ss->loop_end))
+            cdisurf->fillRect(rstep, (i & 3) ? loopRegionHi : loopRegionLo);
+         else
+            cdisurf->fillRect(rstep, (i & 3) ? noLoopHi : noLoopLo);
+         steprect[i] = rstep;
+         steprect[i].offset(size.left + splitpoint, size.top);
+         CRect v(rstep);
+         int p1, p2;
+         if (lfodata->unipolar.val.b)
+         {
+            v.top = v.bottom - (int)(v.getHeight() * ss->steps[i]);
+         }
+         else
+         {
+            p1 = v.bottom - (int)((float)0.5f + v.getHeight() * (0.5f + 0.5f * ss->steps[i]));
+            p2 = (v.bottom + v.top) * 0.5;
+            v.top = min(p1, p2);
+            v.bottom = max(p1, p2) + 1;
+         }
+         // if (p1 == p2) p2++;
+         cdisurf->fillRect(v, stepMarker);
+      }
+
+      rect_steps = steprect[0];
+      rect_steps.right = steprect[n_stepseqsteps - 1].right;
+      rect_steps_retrig = gaterect[0];
+      rect_steps_retrig.right = gaterect[n_stepseqsteps - 1].right;
+
+      rect_ls = maindisp;
+      rect_ls.offset(-size.left - splitpoint, -size.top);
+      rect_ls.top = rect_ls.bottom - margin2;
+      rect_le = rect_ls;
+
+      rect_ls.left += scale * ss->loop_start - 1;
+      rect_ls.right = rect_ls.left + margin2;
+      rect_le.right = rect_le.left + scale * (ss->loop_end + 1);
+      rect_le.left = rect_le.right - margin2;
+
+      cdisurf->fillRect(rect_ls, grabMarker);
+      cdisurf->fillRect(rect_le, grabMarker);
+      CRect linerect(rect_ls);
+      linerect.top = maindisp.top - size.top;
+      linerect.right = linerect.left + 1;
+      cdisurf->fillRect(linerect, grabMarker);
+      linerect = rect_le;
+      linerect.top = maindisp.top - size.top;
+      linerect.left = linerect.right - 1;
+      cdisurf->fillRect(linerect, grabMarker);
+
+      rect_ls.offset(size.left + splitpoint, size.top);
+      rect_le.offset(size.left + splitpoint, size.top);
+
+      
+      CPoint sp(0, 0);
+      CRect sr(size.left + splitpoint, size.top, size.right, size.bottom);
+      cdisurf->commit();
+      cdisurf->draw(dc, sr, sp);
+   }
+   else
+   {
+      CGraphicsPath *path = dc->createGraphicsPath();
+      CGraphicsPath *eupath = dc->createGraphicsPath();
+      CGraphicsPath *edpath = dc->createGraphicsPath();
+
+      pdata tp[n_scene_params];
+      {
+         tp[lfodata->delay.param_id_in_scene].i = lfodata->delay.val.i;
+         tp[lfodata->attack.param_id_in_scene].i = lfodata->attack.val.i;
+         tp[lfodata->hold.param_id_in_scene].i = lfodata->hold.val.i;
+         tp[lfodata->decay.param_id_in_scene].i = lfodata->decay.val.i;
+         tp[lfodata->sustain.param_id_in_scene].i = lfodata->sustain.val.i;
+         tp[lfodata->release.param_id_in_scene].i = lfodata->release.val.i;
+
+         tp[lfodata->magnitude.param_id_in_scene].i = lfodata->magnitude.val.i;
+         tp[lfodata->rate.param_id_in_scene].i = lfodata->rate.val.i;
+         tp[lfodata->shape.param_id_in_scene].i = lfodata->shape.val.i;
+         tp[lfodata->start_phase.param_id_in_scene].i = lfodata->start_phase.val.i;
+         tp[lfodata->deform.param_id_in_scene].i = lfodata->deform.val.i;
+         tp[lfodata->trigmode.param_id_in_scene].i = lm_keytrigger;
+      }
+
+      float susTime = 0.5;
+      float totalEnvTime =  pow(2.0f,lfodata->delay.val.f) +
+          pow(2.0f,lfodata->attack.val.f) +
+          pow(2.0f,lfodata->hold.val.f) +
+          pow(2.0f,lfodata->decay.val.f) +
+          std::min(pow(2.0f,lfodata->release.val.f), 4.f) +
+          susTime;
+
+      LfoModulationSource* tlfo = new LfoModulationSource();
+      tlfo->assign(storage, lfodata, tp, 0, ss, true);
+      tlfo->attack();
+      CRect boxo(maindisp);
+      boxo.offset(-size.left - splitpoint, -size.top);
+      
+      int minSamples = ( 1 << 3 ) * (int)( boxo.right - boxo.left );
+      int totalSamples = std::max( (int)minSamples, (int)(totalEnvTime * samplerate / BLOCK_SIZE) );
+      float drawnTime = totalSamples * samplerate_inv * BLOCK_SIZE;
+
+      // OK so lets assume we want about 1000 pixels worth tops in
+      int averagingWindow = (int)(totalSamples/1000.0) + 1;
+
+#if LINUX
+      float valScale = 10000.0;
+#else
+      float valScale = 100.0;
+#endif
+      int susCountdown = -1;
+      
+      for (int i=0; i<totalSamples; i += averagingWindow )
+      {
+         float val = 0;
+         float eval = 0;
+         float minval = 1000000;
+         float maxval = -1000000;
+         float firstval;
+         float lastval;
+         for (int s = 0; s < averagingWindow; s++)
+         {
+            tlfo->process_block();
+            if( susCountdown < 0 && tlfo->env_state == lenv_stuck )
+            {
+                susCountdown = susTime * samplerate / BLOCK_SIZE;
+            }
+            else if( susCountdown == 0 && tlfo->env_state == lenv_stuck ) {
+                tlfo->release();
+            }
+            else if( susCountdown > 0 )
+            {
+                susCountdown --;
+            }
+            
+            val  += tlfo->output;
+            if( s == 0 ) firstval = tlfo->output;
+            if( s == averagingWindow - 1 ) lastval = tlfo->output;
+            minval = std::min(tlfo->output, minval);
+            maxval = std::max(tlfo->output, maxval);
+            eval += tlfo->env_val * lfodata->magnitude.val.f;
+         }
+         val = val / averagingWindow;
+         eval = eval / averagingWindow;
+         val  = ( ( - val + 1.0f ) * 0.5 * 0.8 + 0.1 ) * valScale;
+         float euval = ( ( - eval + 1.0f ) * 0.5 * 0.8 + 0.1 ) * valScale;
+         float edval = ( ( eval + 1.0f ) * 0.5 * 0.8 + 0.1 ) * valScale;
+      
+         float xc = valScale * i / totalSamples;
+
+         if( i == 0 )
+         {
+             path->beginSubpath(xc, val );
+             eupath->beginSubpath(xc, euval);
+             edpath->beginSubpath(xc, edval);
+         }
+         else
+         {
+             if( maxval - minval > 0.2 )
+             {
+                 minval  = ( ( - minval + 1.0f ) * 0.5 * 0.8 + 0.1 ) * valScale;
+                 maxval  = ( ( - maxval + 1.0f ) * 0.5 * 0.8 + 0.1 ) * valScale;
+                 path->addLine(xc, minval );
+                 path->addLine(xc, maxval );
+             }
+             else
+             {
+                 path->addLine(xc, val );
+             }
+             eupath->addLine(xc, euval);
+             edpath->addLine(xc, edval);
+         }
+      }
+      delete tlfo;
+
+      VSTGUI::CGraphicsTransform tf = VSTGUI::CGraphicsTransform()
+          .scale(boxo.getWidth()/valScale, boxo.getHeight() / valScale )
+          .translate(boxo.getTopLeft().x, boxo.getTopLeft().y )
+          .translate(maindisp.getTopLeft().x, maindisp.getTopLeft().y );
+
+#if LINUX
+      auto xdisp = maindisp;
+      dc->getCurrentTransform().transform(xdisp);
+      VSTGUI::CGraphicsTransform tfpath = VSTGUI::CGraphicsTransform()
+          .scale(boxo.getWidth()/valScale, boxo.getHeight() / valScale )
+          .translate(boxo.getTopLeft().x, boxo.getTopLeft().y )
+          .translate(xdisp.getTopLeft().x, xdisp.getTopLeft().y );
+#else
+      auto tfpath = tf;
+#endif
+
+      dc->saveGlobalState();
+
+      // find time delta
+      int maxNumLabels = 5;
+      std::vector<float> timeDeltas = { 0.5, 1.0, 2.5, 5.0, 10.0 };
+      auto currDelta = timeDeltas.begin();
+      while( currDelta != timeDeltas.end() && ( drawnTime / *currDelta ) > maxNumLabels )
+      {
+          currDelta ++;
+      }
+      float delta = timeDeltas.back();
+      if( currDelta != timeDeltas.end() )
+          delta = *currDelta;
+
+      int nLabels = (int)(drawnTime / delta) + 1;
+      float dx = delta / drawnTime * valScale;
+
+      for( int l=0; l<nLabels; ++l )
+      {
+          float xp = dx * l;
+          float yp = valScale * 0.9;
+#if LINUX
+          yp = valScale * 0.95;
+#endif 
+          CRect tp(CPoint(xp + 1,yp), CPoint(10,10));
+          tf.transform(tp);
+          dc->setFontColor(VSTGUI::kBlackCColor);
+          dc->setFont(lfoTypeFont);
+          char txt[256];
+          float tv = delta * l;
+          if( fabs(roundf(tv) - tv) < 0.05 )
+              snprintf(txt, 256, "%d s", (int)round(delta * l) );
+          else
+              snprintf(txt, 256, "%.1f s", delta * l );
+          dc->drawString(txt, tp, VSTGUI::kLeftText, true );
+
+          CPoint sp(xp, valScale * 0.95), ep(xp, valScale * 0.85 );
+          tf.transform(sp);
+          tf.transform(ep);
+          dc->setLineWidth(1.0);
+          dc->setFrameColor(VSTGUI::CColor(0xE0, 0x80, 0x00));
+          dc->drawLine(sp,ep);
+      }
+      
+      // OK so draw the rules
+      CPoint mid0(0, valScale/2.f), mid1(valScale,valScale/2.f);
+      CPoint top0(0, valScale * 0.9), top1(valScale,valScale * 0.9);
+      CPoint bot0(0, valScale * 0.1), bot1(valScale,valScale * 0.1);
+      tf.transform(mid0);
+      tf.transform(mid1);
+      tf.transform(top0);
+      tf.transform(top1);
+      tf.transform(bot0);
+      tf.transform(bot1);
+      dc->setDrawMode(VSTGUI::kAntiAliasing);
+
+      dc->setLineWidth(1.0);
+      dc->setFrameColor(VSTGUI::CColor(0xE0, 0x80, 0x00));
+      dc->drawLine(mid0, mid1);
+      
+      dc->setLineWidth(1.0);
+      dc->setFrameColor(VSTGUI::CColor(0xE0, 0x80, 0x00));
+      dc->drawLine(top0, top1);
+      dc->drawLine(bot0, bot1);
+      
+#if LINUX
+      dc->setLineWidth(100.0);
+#else
+      dc->setLineWidth(1.3);
+#endif
+      dc->setFrameColor(VSTGUI::CColor(0x00, 0x00, 0, 0xFF));
+      dc->drawGraphicsPath(path, VSTGUI::CDrawContext::PathDrawMode::kPathStroked, &tfpath );
+
+#if LINUX
+      dc->setLineWidth(100.0);
+#else
+      dc->setLineWidth(1.0);
+#endif
+      dc->setFrameColor(VSTGUI::CColor(0xB0, 0x60, 0x00, 0xFF));
+      dc->drawGraphicsPath(eupath, VSTGUI::CDrawContext::PathDrawMode::kPathStroked, &tfpath );
+      dc->drawGraphicsPath(edpath, VSTGUI::CDrawContext::PathDrawMode::kPathStroked, &tfpath );
+      dc->restoreGlobalState();
+      path->forget();
+      eupath->forget();
+      edpath->forget();
+   }
+
+   CColor cskugga = {0x5d, 0x5d, 0x5d, 0xff};
+   CColor cgray = {0x97, 0x98, 0x9a, 0xff};
+   CColor cselected = {0xfe, 0x98, 0x15, 0xff};
+   // CColor blackColor (0, 0, 0, 0);
+   dc->setFrameColor(cskugga);
+   dc->setFont(lfoTypeFont);
+
+   rect_shapes = leftpanel;
+   for (int i = 0; i < n_lfoshapes; i++)
+   {
+      CRect tb(leftpanel);
+      tb.top = leftpanel.top + 10 * i;
+      tb.bottom = tb.top + 10;
+      if (i == lfodata->shape.val.i)
+      {
+         CRect tb2(tb);
+         tb2.left++;
+         tb2.top += 0.5;
+         tb2.inset(2, 1);
+         tb2.offset(0, 1);
+         dc->setFillColor(cselected);
+         dc->drawRect(tb2, kDrawFilled);
+      }
+      // else dc->setFillColor(cgray);
+      // dc->fillRect(tb);
+      shaperect[i] = tb;
+      // tb.offset(0,-1);
+      dc->setFontColor(kBlackCColor);
+      tb.top += 1.6; // now the font is smaller and the box is square, smidge down the text
+      dc->drawString(ls_abberations[i], tb);
+   }
+
+   if (ss && lfodata->shape.val.i == ls_stepseq)
+   {
+      ss_shift_left = leftpanel;
+      ss_shift_left.offset(53, 23);
+      ss_shift_left.right = ss_shift_left.left + 12;
+      ss_shift_left.bottom = ss_shift_left.top + 34;
+
+      dc->setFillColor(cskugga);
+      dc->drawRect(ss_shift_left, kDrawFilled);
+      ss_shift_left.inset(1, 1);
+      ss_shift_left.bottom = ss_shift_left.top + 16;
+
+      dc->setFillColor(cgray);
+      dc->drawRect(ss_shift_left, kDrawFilled);
+      drawtri(ss_shift_left, dc, -1);
+
+      ss_shift_right = ss_shift_left;
+      ss_shift_right.offset(0, 16);
+      dc->setFillColor(cgray);
+      dc->drawRect(ss_shift_right, kDrawFilled);
+      drawtri(ss_shift_right, dc, 1);
+      // ss_shift_left,ss_shift_right;
+   }
+
+   setDirty(false);
+}
+
+void CLFOGui::drawBitmap(CDrawContext* dc)
+{
+   assert(lfodata);
+   assert(storage);
+   assert(ss);
+
+   auto size = getViewSize();
+   CRect outer(size);
+   outer.inset(margin, margin);
+   CRect leftpanel(outer);
+   CRect maindisp(outer);
+   leftpanel.right = lpsize + leftpanel.left;
+   maindisp.left = leftpanel.right + 4 + 15;
+   maindisp.top += 1;
+   maindisp.bottom -= 1;
+
+   cdisurf->begin();
+#if MAC
+   cdisurf->clear(0x0090ffff);
+#else
+   cdisurf->clear(0xffff9000);
+#endif
+   int w = cdisurf->getWidth();
+   int h = cdisurf->getHeight();
+
+   if (ss && lfodata->shape.val.i == ls_stepseq)
+   {
+      // I know I could do the math to convert these colors but I would rather leave them as
+      // literals for the compiler so we don't have to shift them at runtime. See issue #141 in
+      // surge github
+#if MAC
+#define PIX_COL(a, b) b
+#else
+#define PIX_COL(a, b) a
+#endif
+      // Step Sequencer Colors. Remember mac is 0xRRGGBBAA and mac is 0xAABBGGRR
+      int stepMarker = PIX_COL(0xff000000, 0x000000ff);
+      int loopRegionHi = PIX_COL(0xffc6e9c4, 0xc4e9c6ff);
+      int loopRegionLo = PIX_COL(0xffb6d9b4, 0xb4d9b6ff);
+      int noLoopHi = PIX_COL(0xffdfdfdf, 0xdfdfdfff);
+      int noLoopLo = PIX_COL(0xffcfcfcf, 0xcfcfcfff);
+      int grabMarker =
+          PIX_COL(0x00087f00, 0x007f08ff); // Surely you can't mean this to be fully transparent?
+                                           // But leave non-mac unch
+
       for (int i = 0; i < n_stepseqsteps; i++)
       {
          CRect rstep(maindisp), gstep;
@@ -522,4 +958,24 @@ CMouseEventResult CLFOGui::onMouseMoved(CPoint& where, const CButtonState& butto
       }
    }
    return kMouseEventHandled;
+}
+
+void CLFOGui::invalidateIfIdIsInRange(int id)
+{
+   bool inRange = false;
+   if( ! lfodata ) return;
+   
+   auto *c = &lfodata->rate;
+   auto *e = &lfodata->release;
+   while( c <= e && ! inRange )
+   {
+      if( id == c->id )
+         inRange = true;
+      ++c;
+   }
+
+   if (inRange)
+   {
+      invalid();
+   }
 }

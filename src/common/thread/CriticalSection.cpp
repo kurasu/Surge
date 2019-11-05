@@ -1,38 +1,28 @@
 #include "CriticalSection.h"
 
-#if !LINUX
+#if WINDOWS
 
 #include "assert.h"
 
+namespace Surge {
+    
 CriticalSection::CriticalSection()
 {
    refcount = 0;
-#if MAC
-   MPCreateCriticalRegion(&cs);
-#else
    InitializeCriticalSection(&cs);
-#endif
 }
 
 CriticalSection::~CriticalSection()
 {
-#if MAC
-   MPDeleteCriticalRegion(cs);
-#else
    DeleteCriticalSection(&cs);
-#endif
 }
 
 void CriticalSection::enter()
 {
-#if MAC
-   MPEnterCriticalRegion(cs, kDurationForever);
-#else
    EnterCriticalSection(&cs);
-#endif
    refcount++;
    assert(refcount > 0);
-   assert(!(refcount > 5)); // if its >5 there's some crazy *§%* going on ^^
+   assert(!(refcount > 10)); // if its >10 there's some crazy *§%* going on ^^
 }
 
 void CriticalSection::leave()
@@ -43,11 +33,8 @@ void CriticalSection::leave()
       int breakpointme = 0;
    }
    assert(refcount >= 0);
-#if MAC
-   MPExitCriticalRegion(cs);
-#else
    LeaveCriticalSection(&cs);
-#endif
 }
 
+}
 #endif

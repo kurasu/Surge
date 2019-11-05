@@ -55,6 +55,7 @@ installer_mac/*.dmg
 installer_osx/installer
 installer_osx/Install_Surge_*.dmg
 build_logs/
+fxbuild/
 .DS_Store
 
 # IntelliJ IDEA
@@ -67,3 +68,10 @@ premake-stamp
 /Debug
 src/linux/ScalablePiggy*
 *.deb
+
+# Qt Creator
+*.txt.user
+*.txt.user.*
+
+# cmake
+build/

@@ -10,6 +10,7 @@
 struct QuadFilterChainState;
 
 #include <list>
+#include <utility>
 #include <atomic>
 
 #if TARGET_AUDIOUNIT
@@ -21,6 +22,9 @@ typedef SurgeVst3Processor PluginLayer;
 #elif TARGET_VST2
 class Vst2PluginInstance;
 using PluginLayer = Vst2PluginInstance;
+#elif TARGET_LV2
+class SurgeLv2Wrapper;
+using PluginLayer = SurgeLv2Wrapper;
 #elif TARGET_HEADLESS
 class HeadlessPluginLayerProxy;
 using PluginLayer = HeadlessPluginLayerProxy;
@@ -58,7 +62,7 @@ public:
 
    // methods
 public:
-   SurgeSynthesizer(PluginLayer* parent);
+   SurgeSynthesizer(PluginLayer* parent, std::string suppliedDataPath="");
    virtual ~SurgeSynthesizer();
    void playNote(char channel, char key, char velocity, char detune);
    void releaseNote(char channel, char key, char velocity);
@@ -167,6 +171,26 @@ public:
 
    float vu_peak[8];
 
+   void populateDawExtraState() {
+       storage.getPatch().dawExtraState.isPopulated = true;
+       storage.getPatch().dawExtraState.mpeEnabled = mpeEnabled;
+       storage.getPatch().dawExtraState.hasTuning = !storage.isStandardTuning;
+       if( ! storage.isStandardTuning )
+           storage.getPatch().dawExtraState.tuningContents = storage.currentScale.rawText;
+       else
+           storage.getPatch().dawExtraState.tuningContents = "";
+   }
+   void loadFromDawExtraState() {
+       if( ! storage.getPatch().dawExtraState.isPopulated )
+           return;
+       mpeEnabled = storage.getPatch().dawExtraState.mpeEnabled;
+       if( storage.getPatch().dawExtraState.hasTuning )
+       {
+           auto sc = Surge::Storage::parseSCLData(storage.getPatch().dawExtraState.tuningContents );
+           storage.retuneToScale(sc);
+       }
+   }
+   
 public:
    int CC0, PCH, patchid;
    float masterfade = 0;
@@ -194,7 +218,7 @@ public:
 
    // hold pedal stuff
 
-   std::list<int> holdbuffer[2];
+   std::list<std::pair<int,int>> holdbuffer[2];
    void purgeHoldbuffer(int scene);
    quadr_osc sinus;
    int demo_counter = 0;

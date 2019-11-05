@@ -11,7 +11,7 @@
 
 #if LINUX
 #include <experimental/filesystem>
-#elif MAC
+#elif MAC || TARGET_RACK
 #include <filesystem.h>
 #else
 #include <filesystem>
@@ -45,7 +45,7 @@ bool haveReadDefaultsFile = false;
 
 std::string defaultsFileName(SurgeStorage *storage)
 {
-    std::string fn = storage->userDataPath + "/SurgeUserDefaults.xml";
+    std::string fn = storage->userDefaultFilePath + "/SurgeUserDefaults.xml";
     return fn;
 }
 
@@ -99,7 +99,7 @@ bool storeUserDefaultValue(SurgeStorage *storage, const std::string &key, const 
     ** See SurgeSytnehsizer::savePatch for instance
     ** and so we have to do the same here
     */
-    fs::create_directories(storage->userDataPath);
+    fs::create_directories(storage->userDefaultFilePath);
 
     
     UserDefaultValue v;
@@ -128,7 +128,7 @@ bool storeUserDefaultValue(SurgeStorage *storage, const std::string &key, const 
 
     for (auto &el : defaultsFileContents)
     {
-        dFile << "  <default key=\"" << el.first << "\" value=\"" << el.second.value << "\" type=\"" << (int)el.second.type << "\">\n";
+        dFile << "  <default key=\"" << el.first << "\" value=\"" << el.second.value << "\" type=\"" << (int)el.second.type << "\"/>\n";
     }
 
     dFile << "</defaults>" << std::endl;

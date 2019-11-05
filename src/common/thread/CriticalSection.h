@@ -1,17 +1,17 @@
 #pragma once
 
-#if MAC
-#include <CoreServices/CoreServices.h>
-#elif LINUX
+#if MAC | LINUX
+#include <stdio.h>
+#include <pthread.h>
+#include <assert.h>
+
 #else
 #include "windows.h"
 #endif
 
-#if LINUX
+namespace Surge {
 
-#include <stdio.h>
-#include <pthread.h>
-#include <assert.h>
+#if MAC | LINUX
 
 class CriticalSection
 {
@@ -30,7 +30,7 @@ public:
     pthread_mutex_lock(&mutex);
     refcount++;
     assert(refcount > 0);
-    assert(!(refcount > 5)); // if its >5 there's some crazy *§%* going on ^^
+    assert(!(refcount > 10)); // if its >10 there's some crazy *§%* going on ^^
   }
   void leave(){
     refcount--;
@@ -54,13 +54,9 @@ public:
    void leave();
 
 protected:
-#if MAC
-   MPCriticalRegionID cs;
-#else
    CRITICAL_SECTION cs;
-#endif
    int refcount;
 };
 
 #endif
-
+}

@@ -5,7 +5,6 @@
 #include "globals.h"
 #include "Parameter.h"
 #include "ModulationSource.h"
-#include "Sample.h"
 #include "Wavetable.h"
 #include <vector>
 #include <thread/CriticalSection.h>
@@ -16,9 +15,9 @@
 #endif
 #include <tinyxml.h>
 
-#if LINUX
+#if LINUX 
 #include <experimental/filesystem>
-#elif MAC
+#elif MAC || (WINDOWS && TARGET_RACK)
 #include <filesystem.h>
 #else
 #include <filesystem>
@@ -26,6 +25,9 @@
 
 #include <fstream>
 #include <iterator>
+#include <functional>
+
+#include "Tunings.h"
 
 namespace fs = std::experimental::filesystem;
 
@@ -53,10 +55,7 @@ const int FIRoffsetI16 = FIRipolI16_N >> 1;
 extern float sinctable alignas(16)[(FIRipol_M + 1) * FIRipol_N * 2];
 extern float sinctable1X alignas(16)[(FIRipol_M + 1) * FIRipol_N];
 extern short sinctableI16 alignas(16)[(FIRipol_M + 1) * FIRipolI16_N];
-extern float table_dB alignas(16)[512],
-             table_pitch alignas(16)[512],
-             table_pitch_inv alignas(16)[512],
-             table_envrate_lpf alignas(16)[512],
+extern float table_envrate_lpf alignas(16)[512],
              table_envrate_linear alignas(16)[512];
 extern float table_note_omega alignas(16)[2][512];
 extern float waveshapers alignas(16)[8][1024];
@@ -68,7 +67,7 @@ const int n_scene_params = 271;
 const int n_global_params = 113;
 const int n_global_postparams = 1;
 const int n_total_params = n_global_params + 2 * n_scene_params + n_global_postparams;
-const int metaparam_offset = 2048;
+const int metaparam_offset = 20480; // has to be bigger than total + 16 * 130 for fake VST3 mapping
 
 enum sub3_scenemode
 {
@@ -218,7 +217,7 @@ enum lfoshapes
 };
 
 const char ls_abberations[n_lfoshapes][16] = {"Sine",  "Triangle", "Square",   "Ramp",
-                                              "Noise", "S&H",      "Envelope", "Stepseq"};
+                                              "Noise", "S&H",      "Envelope", "Step Seq"};
 
 enum fu_type
 {
@@ -293,7 +292,8 @@ struct MidiChannelState
    float timbre;
 };
 
-struct OscillatorStorage
+// I have used the ordering here in SurgeGUIEditor to iterate. Be careful if tyoe or retrigger move from first/last position.
+struct OscillatorStorage : public CountedSetUserData // The counted set is the wt tables
 {
    Parameter type;
    Parameter pitch, octave;
@@ -302,6 +302,11 @@ struct OscillatorStorage
    Wavetable wt;
    void* queue_xmldata;
    int queue_type;
+
+   virtual int getCountedSetSize()
+   {
+      return wt.n_tables;
+   }
 };
 
 struct FilterStorage
@@ -327,6 +332,7 @@ struct ADSRStorage
    Parameter mode;
 };
 
+// I have used the ordering here in CLFOGui to iterate. Be careful if rate or release move from first/last position.
 struct LFOStorage
 {
    Parameter rate, shape, start_phase, magnitude, deform;
@@ -383,6 +389,28 @@ struct StepSequencerStorage
    unsigned int trigmask;
 };
 
+/*
+** There are a collection of things we want your DAW to save about your particular instance
+** but don't want saved in your patch. So have this extra structure in the patch which we
+** can activate/populate from the DAW hosts. See #915
+*/
+struct DAWExtraStateStorage
+{
+   bool isPopulated = false;
+    
+   int instanceZoomFactor = -1;
+   bool mpeEnabled = false;
+   bool hasTuning = false;
+   std::string tuningContents = "";
+};
+
+
+struct PatchTuningStorage
+{
+    bool tuningStoredInPatch = false;
+    std::string tuningContents = "";
+};
+    
 class SurgeStorage;
 
 class SurgePatch
@@ -391,7 +419,7 @@ public:
    SurgePatch(SurgeStorage* storage);
    ~SurgePatch();
    void init_default_values();
-   void update_controls(bool init = false, void* init_osc = 0);
+   void update_controls(bool init = false, void* init_osc = 0, bool from_stream = false);
    void do_morph();
    void copy_scenedata(pdata*, int scene);
    void copy_globaldata(pdata*);
@@ -419,6 +447,9 @@ public:
 
    StepSequencerStorage stepsequences[2][n_lfos];
 
+   PatchTuningStorage patchTuning;
+   DAWExtraStateStorage dawExtraState;
+   
    std::vector<Parameter*> param_ptr;
    std::vector<int> easy_params_id;
 
@@ -432,6 +463,9 @@ public:
    std::string name, category, author, comment;
    // metaparameters
    char CustomControllerLabel[n_customcontrollers][16];
+
+   int streamingRevision;
+   int currentSynthStreamingRevision;
 };
 
 struct Patch
@@ -450,7 +484,9 @@ struct PatchCategory
    std::vector<PatchCategory> children;
    bool isRoot;
 
+   int internalid;
    int numberOfPatchesInCatgory;
+   int numberOfPatchesInCategoryAndChildren;
 };
 
 enum sub3_copysource
@@ -465,14 +501,19 @@ enum sub3_copysource
 
 /* STORAGE layer			*/
 
-class SurgeStorage
+class alignas(16) SurgeStorage
 {
 public:
    float audio_in alignas(16)[2][BLOCK_SIZE_OS];
    float audio_in_nonOS alignas(16)[2][BLOCK_SIZE];
    //	float sincoffset alignas(16)[(FIRipol_M)*FIRipol_N];	// deprecated
 
-   SurgeStorage();
+
+   SurgeStorage(std::string suppliedDataPath="");
+   float table_pitch alignas(16)[512];
+   float table_pitch_inv alignas(16)[512];
+   float table_note_omega alignas(16)[2][512];
+
    ~SurgeStorage();
 
    std::unique_ptr<SurgePatch> _patch;
@@ -495,14 +536,23 @@ public:
    float poly_aftertouch[2][128];
    float modsource_vu[n_modsources];
    void refresh_wtlist();
+   void refresh_wtlistAddDir(bool userDir, std::string subdir);
    void refresh_patchlist();
    void refreshPatchlistAddDir(bool userDir, std::string subdir);
+
+   void refreshPatchOrWTListAddDir(bool userDir,
+                                   std::string subdir,
+                                   std::function<bool(std::string)> filterOp,
+                                   std::vector<Patch>& items,
+                                   std::vector<PatchCategory>& categories);
+
    void perform_queued_wtloads();
 
    void load_wt(int id, Wavetable* wt);
    void load_wt(std::string filename, Wavetable* wt);
-   void load_wt_wt(std::string filename, Wavetable* wt);
-   void load_wt_wav(std::string filename, Wavetable* wt);
+   bool load_wt_wt(std::string filename, Wavetable* wt);
+   // void load_wt_wav(std::string filename, Wavetable* wt);
+   void load_wt_wav_portable(std::string filename, Wavetable *wt);
    void clipboard_copy(int type, int scene, int entry);
    void clipboard_paste(int type, int scene, int entry);
    int get_clipboard_type();
@@ -520,17 +570,42 @@ public:
    // The in-memory wavetable database.
    std::vector<Patch> wt_list;
    std::vector<PatchCategory> wt_category;
+   int firstThirdPartyWTCategory;
+   int firstUserWTCategory;
    std::vector<int> wtOrdering;
    std::vector<int> wtCategoryOrdering;
 
    std::string wtpath;
    std::string datapath;
    std::string userDataPath;
+   std::string userDefaultFilePath;
+   
    std::string defaultsig, defaultname;
    // float table_sin[512],table_sin_offset[512];
-   CriticalSection CS_WaveTableData, CS_ModRouting;
+   Surge::CriticalSection CS_WaveTableData, CS_ModRouting;
    Wavetable WindowWT;
 
+   float note_to_pitch(float x);
+   float note_to_pitch_inv(float x);
+   inline float note_to_pitch_tuningctr(float x)
+   {
+       return note_to_pitch(x + scaleConstantNote() ) * scaleConstantPitchInv();
+   }
+   inline float note_to_pitch_inv_tuningctr(float x)
+   {
+       return note_to_pitch_inv( x + scaleConstantNote() ) * scaleConstantPitch();
+   }
+       
+   void note_to_omega(float, float&, float&);
+
+   bool retuneToScale(const Surge::Storage::Scale& s);
+   inline int scaleConstantNote() { return 48; }
+   inline float scaleConstantPitch() { return 16.0; }
+   inline float scaleConstantPitchInv() { return 0.0625; } // Obviously that's the inverse of the above
+
+   Surge::Storage::Scale currentScale;
+   bool isStandardTuning;
+   
 private:
    TiXmlDocument snapshotloader;
    std::vector<Parameter> clipboard_p;
@@ -539,11 +614,13 @@ private:
    std::vector<ModulationRouting> clipboard_modulation_scene, clipboard_modulation_voice;
    Wavetable clipboard_wt[n_oscs];
 
+#if TARGET_LV2
+public:
+   // whether to skip loading, desired while exporting manifests
+   static bool skipLoadWtAndPatch;
+#endif
 };
 
-float note_to_pitch(float);
-float note_to_pitch_inv(float);
-void note_to_omega(float, float&, float&);
 float db_to_linear(float);
 float lookup_waveshape(int, float);
 float lookup_waveshape_warp(int, float);

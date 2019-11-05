@@ -28,7 +28,7 @@ LANGUAGE LANG_NEUTRAL,
         //
         // PNG
         //
-
+#if INCLUDE_PNG_WHICH_WE_DONT
         IDB_FILTERBUTTONS PNG
     "resources/bitmaps/bmp00108.png" IDB_FBCONFIG PNG
     "resources/bitmaps/bmp00112.png" IDB_SCENESWITCH PNG
@@ -66,11 +66,9 @@ LANGUAGE LANG_NEUTRAL,
     "resources/bitmaps/bmp00162.png" IDB_STOREPATCH PNG "resources/bitmaps/bmp00163.png"
      IDB_BUTTON_MENU PNG "resources/bitmaps/bmp00164.png"    
 
-#include "scalableui.rc"
+#endif 
+#include "svgresources.rc"
 
-
-     IDR_LATO_FONT BINARY "resources/fonts/Lato-SemiBold.ttf"
-     
     /////////////////////////////////////////////////////////////////////////////
     //
     // Dialog
@@ -118,9 +116,10 @@ LANGUAGE LANG_NEUTRAL,
         // Version
         //
 
-        VS_VERSION_INFO VERSIONINFO FILEVERSION 1,
-    6, 0, 0 PRODUCTVERSION 1, 6, 0,
-    0 FILEFLAGSMASK 0x17L
+        VS_VERSION_INFO VERSIONINFO
+        FILEVERSION 1, 6, 2, 0
+        PRODUCTVERSION 1, 6, 2, 0
+        FILEFLAGSMASK 0x17L
 #ifdef _DEBUG
     FILEFLAGS 0x1L
 #else
@@ -129,10 +128,10 @@ LANGUAGE LANG_NEUTRAL,
     FILEOS 0x4L FILETYPE 0x2L FILESUBTYPE 0x0L BEGIN BLOCK "StringFileInfo" BEGIN BLOCK
                                                            "000004b0" BEGIN VALUE "Comments",
     "http://www.vemberaudio.se" VALUE "CompanyName", "Vember Audio" VALUE "FileDescription",
-    "Surge VSTi instrument" VALUE "FileVersion", "1, 6, 0, 0" VALUE "InternalName",
-    "surge" VALUE "LegalCopyright", "Copyright (C) 2005-2014 Vember Audio" VALUE "OriginalFilename",
+    "Surge VSTi instrument" VALUE "FileVersion", "1, 6, 2, 0" VALUE "InternalName",
+    "surge" VALUE "LegalCopyright", "Copyright (C) 2005-2019 Authors as described in github" VALUE "OriginalFilename",
     "surge.dll" VALUE "ProductName", "Surge" VALUE "ProductVersion",
-    "1, 6, 0, 0" END END BLOCK "VarFileInfo" BEGIN VALUE "Translation", 0x0,
+    "1, 6, 2, 0" END END BLOCK "VarFileInfo" BEGIN VALUE "Translation", 0x0,
     1200 END END
 
         /////////////////////////////////////////////////////////////////////////////

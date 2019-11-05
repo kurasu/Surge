@@ -3,27 +3,18 @@
 //-------------------------------------------------------------------------------------------------------
 #pragma once
 #include "vstcontrols.h"
-
-enum CControlEnum_turbodeluxe
-{
-   kBipolar = 1 << 15,
-   kWhite = 1 << 16,
-   kSemitone = 1 << 17,
-   kMini = 1 << 18,
-   kMeta = 1 << 19,
-   kEasy = 1 << 20,
-   kHide = 1 << 21,
-   kNoPopup = 1 << 22,
-};
+#include "SurgeBitmaps.h"
+#include "SurgeParamConfig.h"
 
 class CSurgeSlider : public CCursorHidingControl
 {
 public:
    CSurgeSlider(const VSTGUI::CPoint& loc,
                 long style,
-                VSTGUI::IControlListener* listener = 0,
-                long tag = 0,
-                bool is_mod = false);
+                VSTGUI::IControlListener* listener,
+                long tag,
+                bool is_mod,
+                std::shared_ptr<SurgeBitmaps> bitmapStore);
    ~CSurgeSlider();
    virtual void draw(VSTGUI::CDrawContext*);
    // virtual void mouse (VSTGUI::CDrawContext *pContext, VSTGUI::CPoint &where, long buttons = -1);
@@ -63,7 +54,7 @@ public:
       has_modulation_current = b;
       invalid();
    } // - " " - for the currently selected modsource
-   virtual void bounceValue();
+   virtual void bounceValue(const bool keeprest = false);
 
    virtual bool isInMouseInteraction();
 
@@ -76,6 +67,17 @@ public:
 
    bool is_mod;
    bool disabled;
+
+   enum MoveRateState
+   {
+      kUnInitialized = 0,
+      kClassic,
+      kSlow,
+      kMedium,
+      kExact
+   };
+
+   static MoveRateState sliderMoveRateState;
 
 private:
    VSTGUI::CBitmap *pHandle, *pTray, *pModHandle;
@@ -94,4 +96,6 @@ private:
    VSTGUI::CPoint lastpoint, sourcepoint;
    float oldVal, *edit_value;
    int drawcount_debug;
+
+   float restvalue, restmodval;
 };

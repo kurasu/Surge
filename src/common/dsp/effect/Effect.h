@@ -72,12 +72,18 @@ public:
    }
    float vu[KNumVuSlots]; // stereo pairs, just use every other when mono
 
+   virtual void handleStreamingMismatches(int streamingRevision, int currentSynthStreamingRevision)
+   {
+       // No-op here.
+   }
+
 protected:
    SurgeStorage* storage;
    FxStorage* fxdata;
    pdata* pd;
    int ringout;
    float* f[n_fx_params];
+   int* pdata_ival[n_fx_params]; // f is not a great choice for a member name, but 'i' woudl be worse!
 };
 
 Effect* spawn_effect(int id, SurgeStorage* storage, FxStorage* fxdata, pdata* pd);

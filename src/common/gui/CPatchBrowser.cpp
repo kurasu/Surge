@@ -3,6 +3,7 @@
 //-------------------------------------------------------------------------------------------------------
 #include "CPatchBrowser.h"
 
+#include "UserInteractions.h"
 #include <vector>
 
 using namespace VSTGUI;
@@ -13,7 +14,6 @@ extern CFontRef patchNameFont;
 
 void CPatchBrowser::draw(CDrawContext* dc)
 {
-   dc->setFillColor(kBlackCColor);
    CRect size = getViewSize();
    CRect ar(size);
    ar.inset(1, 0);
@@ -41,7 +41,6 @@ void CPatchBrowser::draw(CDrawContext* dc)
    dc->drawString(category.c_str(), al, kLeftText, true);
    al.offset(0, 12);
    dc->drawString(author.c_str(), al, kLeftText, true);
-
    setDirty(false);
 }
 
@@ -89,7 +88,7 @@ CMouseEventResult CPatchBrowser::onMouseDown(CPoint& where, const CButtonState& 
           }
       }
 
-      populatePatchMenuForCategory(rightMouseCategory,contextMenu,single_category,main_e,true);
+      populatePatchMenuForCategory(rightMouseCategory,contextMenu,single_category,main_e,false);
    }
    else
    {
@@ -111,6 +110,15 @@ CMouseEventResult CPatchBrowser::onMouseDown(CPoint& where, const CButtonState& 
    }
    // contextMenu->addEntry("refresh list");
 
+   contextMenu->addSeparator();
+   auto contentItem = new CCommandMenuItem(CCommandMenuItem::Desc("Download Additional Content..."));
+   auto contentAction = [](CCommandMenuItem *item)
+       {
+           Surge::UserInteractions::openURL("https://github.com/surge-synthesizer/surge-synthesizer.github.io/wiki/Additional-Content");
+       };
+   contentItem->setActions(contentAction,nullptr);
+   contextMenu->addEntry(contentItem);
+   
    getFrame()->addView(contextMenu); // add to frame
    contextMenu->setDirty();
    contextMenu->popup();
@@ -124,7 +132,9 @@ bool CPatchBrowser::populatePatchMenuForCategory( int c, COptionMenu *contextMen
     bool amIChecked = false;
     PatchCategory cat = storage->patch_category[ c ];
     if (rootCall && ! cat.isRoot) return false; // stop it going in the top menu which is a straight iteration
-    
+    if (cat.numberOfPatchesInCategoryAndChildren == 0)
+       return false; // Don't do empty categories
+
     int splitcount = 256;
     // Go through the whole patch list in alphabetical order and filter
     // out only the patches that belong to the current category.
@@ -178,7 +188,7 @@ bool CPatchBrowser::populatePatchMenuForCategory( int c, COptionMenu *contextMen
             int idx = 0;
             for (auto &cc : storage->patch_category)
             {
-                if (cc.name == childcat.name) break;
+                if (cc.name == childcat.name && cc.internalid == childcat.internalid) break;
                 idx++;
             }
             bool checkedKid = populatePatchMenuForCategory( idx, subMenu, false, main_e, false );
@@ -199,8 +209,10 @@ bool CPatchBrowser::populatePatchMenuForCategory( int c, COptionMenu *contextMen
         if (n_subc > 1)
             sprintf(name, "%s - %i", menuName.c_str(), subc + 1);
         else
-            strncpy(name, menuName.c_str(), NAMECHARS);
-        
+        {
+           strncpy(name, menuName.c_str(), NAMECHARS);
+        }
+
         if (!single_category)
         {
             CMenuItem *entry = contextMenu->addEntry(subMenu, name);

@@ -5,6 +5,7 @@
 #include "vstcontrols.h"
 #include "SurgeStorage.h"
 #include "PopupEditorSpawner.h"
+#include "SurgeBitmaps.h"
 
 class CSnapshotMenu : public VSTGUI::COptionMenu
 {
@@ -13,7 +14,7 @@ public:
    virtual ~CSnapshotMenu();
    virtual void draw(VSTGUI::CDrawContext* dc);
    // virtual VSTGUI::CMouseEventResult onMouseDown(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons);
-   void populate();
+   virtual void populate();
    virtual void loadSnapshot(int type, TiXmlElement* e){};
    virtual void saveSnapshot(TiXmlElement* e, const char* name){};
    virtual bool canSave();
@@ -31,12 +32,14 @@ public:
             VSTGUI::IControlListener* listener,
             long tag,
             SurgeStorage* storage,
-            OscillatorStorage* osc);
+            OscillatorStorage* osc,
+            std::shared_ptr<SurgeBitmaps>);
    virtual void draw(VSTGUI::CDrawContext* dc);
    virtual void loadSnapshot(int type, TiXmlElement* e);
 
 protected:
    OscillatorStorage* osc = nullptr;
+   VSTGUI::CBitmap* bmp = nullptr;
 
    CLASS_METHODS(COscMenu, VSTGUI::CControl)
 };
@@ -58,10 +61,15 @@ public:
    }
    virtual void loadSnapshot(int type, TiXmlElement* e);
    virtual void saveSnapshot(TiXmlElement* e, const char* name);
-
+   virtual void populate() override;
+   
 protected:
    FxStorage *fx = nullptr, *fxbuffer = nullptr;
+   static std::vector<float> fxCopyPaste; // OK this is a crap data structure for now. See the code.
    int slot = 0;
+
+   void copyFX();
+   void pasteFX();
 
    CLASS_METHODS(CFxMenu, VSTGUI::CControl)
 };

@@ -5,10 +5,13 @@
 //  Created by Keith Zantow on 10/2/18.
 //
 
+#if defined(__APPLE__) || TARGET_RACK
 #ifdef __APPLE__
 #include "TargetConditionals.h"
-#ifdef TARGET_OS_MAC
+#endif
+#if defined(TARGET_OS_MAC) || TARGET_RACK
 
+#include <sys/stat.h>
 #include "filesystem.h"
 
 namespace std::experimental::filesystem {
@@ -91,7 +94,9 @@ namespace std::experimental::filesystem {
     void create_directories(path p) {
         mode_t nMode = 0755; // UNIX style permissions
         int nError = 0;
-#if defined(_WIN32)
+#if ! TARGET_RACK
+	// FIX THAT
+#if defined(_WIN32) 
         nError = _mkdir(p.c_str()); // can be used on Windows
 #else
         // create_directories is recursive so this solution
@@ -110,6 +115,7 @@ namespace std::experimental::filesystem {
         }
         // and clean up the end
         nError = mkdir(file_path, nMode );
+#endif
 #endif
         if (nError != 0) {
             // handle your error here
@@ -132,16 +138,24 @@ namespace std::experimental::filesystem {
     std::vector<file> directory_iterator(path p) {
         std::vector<file> files;
         DIR *dp;
-        struct dirent *dirp;
         if((dp  = opendir(p.c_str())) == NULL) {
 //            std::cout << "Error(" << errno << ") opening " << p.generic_string() << std::endl;
           return files;
         }
         
         // this needs to return the full path not just the relative path
-        while ((dirp = readdir(dp)) != NULL) {
+#if WINDOWS
+        // This code is only used in WINDOWS on Rack; and on Rack mingw is using a posix impl
+        // without readdir_r. So do the old fashioned way
+        struct dirent *dirp;
+        while( (dirp = readdir(dp)) != NULL ) {
           string fname(dirp->d_name);
-            // Skip . and .. : https://github.com/kurasu/surge/issues/77
+#else
+        struct dirent dirp, *entry;
+        while ( (readdir_r(dp, &dirp, &entry) == 0) && entry != NULL) {
+          string fname(dirp.d_name);
+#endif
+          // Skip . and .. : https://github.com/kurasu/surge/issues/77
           if (fname.compare(".") == 0 || fname.compare("..") == 0) {
               continue;
           }

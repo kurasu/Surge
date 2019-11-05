@@ -35,13 +35,19 @@ Effect* spawn_effect(int id, SurgeStorage* storage, FxStorage* fxdata, pdata* pd
 
 Effect::Effect(SurgeStorage* storage, FxStorage* fxdata, pdata* pd)
 {
-   assert(storage);
+   // assert(storage);
    this->fxdata = fxdata;
    this->storage = storage;
    this->pd = pd;
    ringout = 10000000;
-   for (int i = 0; i < n_fx_params; i++)
-      f[i] = &pd[fxdata->p[i].id].f;
+   if(pd)
+   {
+       for (int i = 0; i < n_fx_params; i++)
+       {
+           f[i] = &pd[fxdata->p[i].id].f;
+           pdata_ival[i] = &pd[fxdata->p[i].id].i;
+       }
+   }
 }
 
 bool Effect::process_ringout(float* dataL, float* dataR, bool indata_present)
@@ -268,8 +274,8 @@ template <int v> void ChorusEffect<v>::setvars(bool init)
       feedback.set_target_smoothed(0.5f * amp_to_linear(*f[3]));
       float rate =
           envelope_rate_linear(-*f[1]) * (fxdata->p[1].temposync ? storage->temposyncratio : 1.f);
-      float tm =
-          note_to_pitch(12 * *f[0]) * (fxdata->p[0].temposync ? storage->temposyncratio_inv : 1.f);
+      float tm = storage->note_to_pitch(12 * *f[0]) *
+                 (fxdata->p[0].temposync ? storage->temposyncratio_inv : 1.f);
       for (int i = 0; i < v; i++)
       {
          lfophase[i] += rate;

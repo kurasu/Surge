@@ -6,22 +6,22 @@ namespace Surge
 {
 namespace UserInteractions
 {
-    
-void promptError(const Surge::Error &e)
-{
-    promptError(e.getMessage(), e.getTitle());
-}
 
-void promptError(const std::string &message,
-                 const std::string &title)
+void promptError(const std::string &message, const std::string &title,
+                 SurgeGUIEditor *guiEditor)
 {
     std::cerr << "Surge Error\n"
               << title << "\n"
               << message << "\n" << std::flush;
 }
 
-UserInteractions::MessageResult promptOKCancel(const std::string &message,
-                                               const std::string &title)
+void promptError(const Surge::Error &error, SurgeGUIEditor *guiEditor)
+{
+    promptError(error.getMessage(), error.getTitle());
+}
+
+MessageResult promptOKCancel(const std::string &message, const std::string &title,
+                             SurgeGUIEditor *guiEditor)
 {
     std::cerr << "Surge OkCancel\n"
               << title << "\n"
@@ -33,7 +33,20 @@ UserInteractions::MessageResult promptOKCancel(const std::string &message,
 void openURL(const std::string &url)
 {
 }
-    
-};
+void showHTML( const std::string &html)
+{
+    std::cerr << "SURGE HTML: " << html << std::endl;
+}
+
+void promptFileOpenDialog(const std::string& initialDirectory,
+                          const std::string& filterSuffix,
+                          std::function<void(std::string)> callbackOnOpen,
+			  bool od, bool cd,
+                          SurgeGUIEditor* guiEditor)
+{
+   UserInteractions::promptError("OpenFileDialog is unimplemented in this version of Surge. Sorry!",
+                                 "Unimplemented Function", guiEditor);
+}
 };
 
+};

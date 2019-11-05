@@ -17,6 +17,9 @@
 #elif TARGET_VST3
 #include "SurgeVst3Processor.h"
 #include "vstgui/plugin-bindings/plugguieditor.h"
+#elif TARGET_LV2
+#include "SurgeLv2Wrapper.h"
+#include "vstgui/plugin-bindings/plugguieditor.h"
 #elif TARGET_APP
 #include "PluginLayer.h"
 #include "vstgui/plugin-bindings/plugguieditor.h"
@@ -31,13 +34,16 @@
 #include "vstgui/plugin-bindings/aeffguieditor.h"
 #endif
 #endif
-#include "CSurgeSlider.h"
+#include "SurgeParamConfig.h"
+
+#include "UserDefaults.h"
 
 using namespace std;
 
-SurgeSynthesizer::SurgeSynthesizer(PluginLayer* parent)
+SurgeSynthesizer::SurgeSynthesizer(PluginLayer* parent, std::string suppliedDataPath)
     //: halfband_AL(false),halfband_AR(false),halfband_BL(false),halfband_BR(false),
-    : hpA(&storage)
+    : storage(suppliedDataPath)
+    , hpA(&storage)
    , hpB(&storage)
    , _parent(parent)
    , halfbandA(6, true)
@@ -51,7 +57,8 @@ SurgeSynthesizer::SurgeSynthesizer(PluginLayer* parent)
    release_anyway[0] = false;
    release_anyway[1] = false;
    load_fx_needed = true;
-
+   process_input = false; // hosts set this if there are input busses
+   
    fx_suspend_bitmask = 0;
 
    demo_counter = 10;
@@ -81,6 +88,13 @@ SurgeSynthesizer::SurgeSynthesizer(PluginLayer* parent)
        (QuadFilterChainState*)_aligned_malloc((MAX_VOICES >> 2) * sizeof(QuadFilterChainState), 16);
    FBQ[1] =
        (QuadFilterChainState*)_aligned_malloc((MAX_VOICES >> 2) * sizeof(QuadFilterChainState), 16);
+
+   for(int i=0; i<(MAX_VOICES >> 2); ++i)
+   {
+       InitQuadFilterChainStateToZero(&(FBQ[0][i]));
+       InitQuadFilterChainStateToZero(&(FBQ[1][i]));
+   }
+
 
    SurgePatch& patch = storage.getPatch();
 
@@ -157,7 +171,7 @@ SurgeSynthesizer::SurgeSynthesizer(PluginLayer* parent)
 
    mpeEnabled = false;
    mpeVoices = 0;
-   mpePitchBendRange = 48;
+   mpePitchBendRange = Surge::Storage::getUserDefaultValue(&storage, "mpePitchBendRange", 48);
    mpeGlobalPitchBendRange = 2;
 
    //	load_patch(0);
@@ -208,6 +222,14 @@ int SurgeSynthesizer::calculateChannelMask(int channel, int key)
          break;
       }
    }
+   else if(storage.getPatch().scenemode.val.i == sm_single)
+   {
+       if (storage.getPatch().scene_active.val.i == 1)
+           channelmask = 2;
+       else
+           channelmask = 1;
+   }
+
    return channelmask;
 }
 
@@ -356,6 +378,7 @@ void SurgeSynthesizer::freeVoice(SurgeVoice* v)
          voices_usedby[1][i] = 0;
       }
    }
+   v->freeAllocatedElements();
 }
 
 int SurgeSynthesizer::getMpeMainChannel(int voiceChannel, int key)
@@ -399,7 +422,7 @@ void SurgeSynthesizer::playVoice(int scene, char channel, char key, char velocit
          new (nvoice) SurgeVoice(&storage, &storage.getPatch().scene[scene],
                                  storage.getPatch().scenedata[scene], key, velocity, channel, scene,
                                  detune, &channelState[channel].keyState[key],
-                                 &channelState[mpeMainChannel], &channelState[channel]);
+                                 &channelState[mpeMainChannel], &channelState[channel], mpeEnabled);
       }
       break;
    }
@@ -434,7 +457,7 @@ void SurgeSynthesizer::playVoice(int scene, char channel, char key, char velocit
          new (nvoice) SurgeVoice(&storage, &storage.getPatch().scene[scene],
                                  storage.getPatch().scenedata[scene], key, velocity, channel, scene,
                                  detune, &channelState[channel].keyState[key],
-                                 &channelState[mpeMainChannel], &channelState[channel]);
+                                 &channelState[mpeMainChannel], &channelState[channel], mpeEnabled);
       }
    }
    break;
@@ -450,6 +473,16 @@ void SurgeSynthesizer::playVoice(int scene, char channel, char key, char velocit
          {
             v->legato(key, velocity, detune);
             found_one = true;
+            if (mpeEnabled)
+            {
+               /*
+               ** This voice was created on a channel but is being legato held to another channel
+               ** so it needs to borrow the channel and channelState. Obviously this can only
+               ** happen in MPE mode.
+               */
+               v->state.channel = channel;
+               v->state.voiceChannelState = &channelState[channel];
+            }
             break;
          }
          else
@@ -470,7 +503,7 @@ void SurgeSynthesizer::playVoice(int scene, char channel, char key, char velocit
             new (nvoice) SurgeVoice(&storage, &storage.getPatch().scene[scene],
                                     storage.getPatch().scenedata[scene], key, velocity, channel,
                                     scene, detune, &channelState[channel].keyState[key],
-                                    &channelState[mpeMainChannel], &channelState[channel]);
+                                    &channelState[mpeMainChannel], &channelState[channel], mpeEnabled);
          }
       }
    }
@@ -494,19 +527,25 @@ void SurgeSynthesizer::releaseNote(char channel, char key, char velocity)
    int channelmask =
        ((channel == 0) ? 3 : 0) || ((channel == 1) ? 1 : 0) || ((channel == 2) ? 2 : 0);
 
-   // if(channelmask&1)
+   for( int s=0; s<2; ++s )
    {
-      if (!channelState[channel].hold)
-         releaseNotePostHoldCheck(0, channel, key, velocity);
-      else
-         holdbuffer[0].push_back(key); // hold pedal is down, add to bufffer
+      for( auto *v : voices[s] )
+      {
+         if ((v->state.key == key) && (v->state.channel == channel))
+            v->state.releasevelocity = velocity;
+      }
    }
-   // if(channelmask&2)
+
+   bool noHold = ! channelState[channel].hold;
+   if( mpeEnabled )
+      noHold = noHold && ! channelState[0].hold;
+   
+   for( int s=0; s<2; ++s )
    {
-      if (!channelState[channel].hold)
-         releaseNotePostHoldCheck(1, channel, key, velocity);
+      if (noHold)
+         releaseNotePostHoldCheck(s, channel, key, velocity);
       else
-         holdbuffer[1].push_back(key); // hold pedal is down, add to bufffer
+         holdbuffer[s].push_back(std::make_pair(channel,key)); // hold pedal is down, add to bufffer
    }
 }
 
@@ -541,15 +580,49 @@ void SurgeSynthesizer::releaseNotePostHoldCheck(int scene, char channel, char ke
          case pm_mono_fp:
          case pm_latch:
          {
+            /*
+            ** In these modes, our job when we release a note is to see if
+            ** any ohter note is held.
+            **
+            ** In normal midi mode, that means scanning the keystate of our
+            ** channel looking for another note.
+            **
+            ** In MPE mode, where each note is per channel, that means
+            ** scanning all non-main channels rather than ourself for the
+            ** highest note
+            */
             if ((v->state.key == key) && (v->state.channel == channel))
             {
+	       int activateVoiceKey = 60, activateVoiceChannel = 0; // these will be overriden
+
                // v->release();
-               for (k = hikey; k >= lowkey; k--) // search downwards
+               if (!mpeEnabled)
                {
-                  if (channelState[channel].keyState[k].keystate)
+                  for (k = hikey; k >= lowkey && !do_switch; k--) // search downwards
                   {
-                     do_switch = true;
-                     break;
+                     if (channelState[channel].keyState[k].keystate)
+                     {
+                        do_switch = true;
+                        activateVoiceKey = k;
+                        activateVoiceChannel = channel;
+                        break;
+                     }
+                  }
+               }
+               else
+               {
+                  for (k = hikey; k >= lowkey && !do_switch; k--)
+                  {
+                     for (int mpeChan = 1; mpeChan < 16; ++mpeChan)
+                     {
+                        if (mpeChan != channel && channelState[mpeChan].keyState[k].keystate)
+                        {
+                           do_switch = true;
+                           activateVoiceChannel = mpeChan;
+                           activateVoiceKey = k;
+                           break;
+                        }
+                     }
                   }
                }
                if (!do_switch)
@@ -562,8 +635,10 @@ void SurgeSynthesizer::releaseNotePostHoldCheck(int scene, char channel, char ke
                   // confirm that no notes are active
                   v->uber_release();
                   if (getNonUltrareleaseVoices(scene) == 0)
-                     playVoice(scene, channel, k, velocity,
-                               channelState[channel].keyState[k].lastdetune);
+                  {
+                     playVoice(scene, activateVoiceChannel, activateVoiceKey, velocity,
+                               channelState[activateVoiceChannel].keyState[k].lastdetune);
+                  }
                }
             }
          }
@@ -571,18 +646,50 @@ void SurgeSynthesizer::releaseNotePostHoldCheck(int scene, char channel, char ke
          case pm_mono_st:
          case pm_mono_st_fp:
          {
-            if ((v->state.key == key) && (v->state.channel == channel))
+            /*
+            ** In these modes the note will collide on the main channel
+            */
+            int stateChannel = getMpeMainChannel(v->state.channel, v->state.key);
+            int noteChannel = getMpeMainChannel(channel, key);
+
+            if ((v->state.key == key) && (stateChannel == noteChannel))
             {
                bool do_release = true;
-               for (k = hikey; k >= lowkey; k--) // search downwards
+               /*
+               ** Again the note I need to legato to is on my channel in non MPE and
+               ** is on another channel in MPE mode
+               */
+               if (!mpeEnabled)
                {
-                  if (channelState[channel].keyState[k].keystate)
+                  for (k = hikey; k >= lowkey && do_release; k--) // search downwards
                   {
-                     v->legato(k, velocity, channelState[channel].keyState[k].lastdetune);
-                     do_release = false;
-                     break;
+                     if (channelState[channel].keyState[k].keystate)
+                     {
+                        v->legato(k, velocity, channelState[channel].keyState[k].lastdetune);
+                        do_release = false;
+                        break;
+                     }
                   }
                }
+               else
+               {
+                  for (k = hikey; k >= lowkey && do_release; k--) // search downwards
+                  {
+                     for (int mpeChan = 1; mpeChan < 16; ++mpeChan)
+                     {
+                        if (mpeChan != channel && channelState[mpeChan].keyState[k].keystate)
+                        {
+                           v->legato(k, velocity, channelState[mpeChan].keyState[k].lastdetune);
+                           do_release = false;
+                           // See the comment above at the other _st legato spot
+                           v->state.channel = mpeChan;
+                           v->state.voiceChannelState = &channelState[mpeChan];
+                           break;
+                        }
+                     }
+                  }
+               }
+
                if (do_release)
                   v->release();
             }
@@ -672,8 +779,7 @@ void SurgeSynthesizer::sendParameterAutomation(long index, float value)
    if (externalparam >= 0)
    {
 #if TARGET_AUDIOUNIT
-      // FIXME!
-      // getParent()->ParameterUpdate(externalparam);
+      getParent()->ParameterUpdate(externalparam);
 #elif TARGET_VST3
       getParent()->setParameterAutomated(externalparam, value);
 #elif TARGET_HEADLESS || TARGET_APP
@@ -728,7 +834,7 @@ void SurgeSynthesizer::onRPN(int channel, int lsbRPN, int msbRPN, int lsbValue, 
    {
       mpeEnabled = msbValue > 0;
       mpeVoices = msbValue & 0xF;
-      mpePitchBendRange = 48;
+      mpePitchBendRange = Surge::Storage::getUserDefaultValue(&storage, "mpePitchBendRange", 48);
       mpeGlobalPitchBendRange = 2;
       return;
    }
@@ -737,7 +843,7 @@ void SurgeSynthesizer::onRPN(int channel, int lsbRPN, int msbRPN, int lsbValue, 
        // This is the invalid message which the ROLI sends. Rather than have the Roli not work
        mpeEnabled = true;
        mpeVoices = msbValue & 0xF;
-       mpePitchBendRange = 48;
+       mpePitchBendRange = Surge::Storage::getUserDefaultValue(&storage, "mpePitchBendRange", 48);
        mpeGlobalPitchBendRange = 2;
        return;
    }
@@ -876,7 +982,12 @@ void SurgeSynthesizer::channelController(char channel, int cc, int value)
       {
          ((ControllerModulationSource*)storage.getPatch().scene[0].modsources[ms_ctrl1 + i])
              ->set_target01(fval);
+#if !TARGET_LV2
          sendParameterAutomation(i + metaparam_offset, fval);
+#else
+         // LV2 must not modify its own control input; just set the value.
+         setParameter01(i + metaparam_offset, fval);
+#endif
       }
    }
 
@@ -949,25 +1060,21 @@ void SurgeSynthesizer::channelController(char channel, int cc, int value)
 void SurgeSynthesizer::purgeHoldbuffer(int scene)
 {
    int z;
-   list<int>::iterator iter = holdbuffer[scene].begin();
-   while (1)
+   std::list<std::pair<int,int>> retainBuffer;
+   for( auto hp : holdbuffer[scene] )
    {
-      if (iter == holdbuffer[scene].end())
-         break;
-      z = *iter;
-      if (/*voice_state[z].active && */ !channelState[0].hold)
+      auto channel = hp.first;
+      auto key = hp.second;
+      if (!channelState[0].hold && ! channelState[channel].hold )
       {
-         // voices[z]->release(127);
-         releaseNotePostHoldCheck(scene, 0, z, 127);
-         list<int>::iterator del = iter;
-         iter++;
-         holdbuffer[scene].erase(del);
+         releaseNotePostHoldCheck(scene, channel, key, 127);
       }
       else
-         iter++;
+      {
+         retainBuffer.push_back(hp);
+      }
    }
-
-   // note: Must remove entries when notes kill themselves as well
+   holdbuffer[scene] = retainBuffer;
 }
 
 void SurgeSynthesizer::allNotesOff()
@@ -1015,6 +1122,11 @@ void SurgeSynthesizer::allNotesOff()
 
 void SurgeSynthesizer::setSamplerate(float sr)
 {
+   // If I am changing my sample rate I will change my internal tables, so this
+   // needs to be tuning aware and reapply tuning if needed
+   auto s = storage.currentScale;
+   bool wasST = storage.isStandardTuning;
+
    samplerate = sr;
    dsamplerate = sr;
    samplerate_inv = 1.0 / sr;
@@ -1023,6 +1135,11 @@ void SurgeSynthesizer::setSamplerate(float sr)
    dsamplerate_os_inv = 1.0 / dsamplerate_os;
    storage.init_tables();
    sinus.set_rate(1000.0 * dsamplerate_inv);
+
+   if( ! wasST )
+   {
+       storage.retuneToScale(s);
+   }
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -1203,8 +1320,29 @@ bool SurgeSynthesizer::setParameter01(long index, float value, bool external, bo
             }
          }
          break;
-      case ct_wstype:
       case ct_osctype:
+      {
+          int s = storage.getPatch().param_ptr[index]->scene - 1;
+
+          if( storage.getPatch().param_ptr[index]->val.i != oldval.i )
+          {
+              /*
+              ** Wish there was a better way to figure out my osc but thsi works
+              */
+              for( auto oi = 0; s >=0 && s <= 1 && oi < n_oscs; oi++ )
+              {
+                  if( storage.getPatch().scene[s].osc[oi].type.id == storage.getPatch().param_ptr[index]->id )
+                  {
+                      storage.getPatch().scene[s].osc[oi].queue_type = storage.getPatch().param_ptr[index]->val.i;
+                  }
+              }
+          }
+          switch_toggled_queued = true;
+          need_refresh = true;
+          refresh_editor = true;
+          break;
+      }
+      case ct_wstype:
       case ct_bool_mute:
       case ct_bool_fm:
       case ct_fbconfig:
@@ -1241,11 +1379,11 @@ bool SurgeSynthesizer::setParameter01(long index, float value, bool external, bo
             storage.getPatch().scene[s].filterunit[1].cutoff.set_type(ct_freq_audible);
             storage.getPatch().scene[s].filterunit[1].cutoff.set_name("Cutoff");
          }
-
          need_refresh = true;
       }
       break;
       case ct_envmode:
+         refresh_editor = true;
          need_refresh = true; // See github issue #160
          break;
       case ct_bool_link_switch:
@@ -1267,7 +1405,7 @@ bool SurgeSynthesizer::setParameter01(long index, float value, bool external, bo
             }
          }
          switch_toggled_queued = true;
-         // need_refresh = true; See github issue #160
+         need_refresh = true; 
          break;
       };
    }
@@ -1833,7 +1971,8 @@ void SurgeSynthesizer::getParameterNameW(long index, wchar_t* ptr)
 {
    if ((index >= 0) && (index < storage.getPatch().param_ptr.size()))
    {
-      swprintf(ptr, 128, L"%S", storage.getPatch().param_ptr[index]->get_full_name());
+      // the input is not wide so don't use %S
+      swprintf(ptr, 128, L"%s", storage.getPatch().param_ptr[index]->get_full_name());
    }
    else if (index >= metaparam_offset)
    {
@@ -1844,7 +1983,7 @@ void SurgeSynthesizer::getParameterNameW(long index, wchar_t* ptr)
       }
       else
       {
-         swprintf(ptr, 128, L"C%i:%S", c + 1, storage.getPatch().CustomControllerLabel[c]);
+         swprintf(ptr, 128, L"C%i:%s", c + 1, storage.getPatch().CustomControllerLabel[c]);
       }
    }
    else
@@ -1857,7 +1996,7 @@ void SurgeSynthesizer::getParameterShortNameW(long index, wchar_t* ptr)
 {
    if ((index >= 0) && (index < storage.getPatch().param_ptr.size()))
    {
-      swprintf(ptr, 128, L"%S", storage.getPatch().param_ptr[index]->get_name());
+      swprintf(ptr, 128, L"%s", storage.getPatch().param_ptr[index]->get_name());
    }
    else if (index >= metaparam_offset)
    {
@@ -1868,7 +2007,7 @@ void SurgeSynthesizer::getParameterShortNameW(long index, wchar_t* ptr)
       }
       else
       {
-         swprintf(ptr, 128, L"C%i:%S", c + 1, storage.getPatch().CustomControllerLabel[c]);
+         swprintf(ptr, 128, L"C%i:%s", c + 1, storage.getPatch().CustomControllerLabel[c]);
       }
    }
    else
@@ -1896,7 +2035,7 @@ void SurgeSynthesizer::getParameterStringW(long index, float value, wchar_t* ptr
       char text[128];
       storage.getPatch().param_ptr[index]->get_display(text);
 
-      swprintf(ptr, 128, L"%S", text);
+      swprintf(ptr, 128, L"%s", text);
    }
    else if (index >= metaparam_offset)
    {
@@ -1999,6 +2138,9 @@ DWORD WINAPI loadPatchInBackgroundThread(LPVOID lpParam)
    synth->patchid_queue = -1;
    synth->allNotesOff();
    synth->loadPatch(patchid);
+#if TARGET_LV2
+   synth->getParent()->patchChanged();
+#endif
    synth->halt_engine = false;
    return 0;
 }
@@ -2011,6 +2153,9 @@ void SurgeSynthesizer::processThreadunsafeOperations()
       if (patchid_queue >= 0)
       {
          loadPatch(patchid_queue);
+#if TARGET_LV2
+         getParent()->patchChanged();
+#endif
          patchid_queue = -1;
       }
 

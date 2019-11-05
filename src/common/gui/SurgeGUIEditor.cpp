@@ -8,6 +8,7 @@
 #include "CSwitchControl.h"
 #include "CParameterTooltip.h"
 #include "CPatchBrowser.h"
+#include "CStatusPanel.h"
 #include "COscillatorDisplay.h"
 #include "CModulationSourceButton.h"
 #include "CSnapshotMenu.h"
@@ -32,38 +33,27 @@
 #include "aulayer.h"
 #endif
 
-#if MAC || WINDOWS
-#define USE_RUNTIME_LOADED_FONTS 1
-#else
-#define USE_RUNTIME_LOADED_FONTS 0
+#include "vstgui/lib/platform/platform_x11.h"
+#include "vstgui/lib/platform/linux/x11platform.h"
+
+#if LINUX && TARGET_LV2
+namespace SurgeLv2
+{
+    VSTGUI::SharedPointer<VSTGUI::X11::IRunLoop> createRunLoop(void *ui);
+}
 #endif
 
-#if USE_RUNTIME_LOADED_FONTS
 #include "RuntimeFont.h"
-#endif
 
 const int yofs = 10;
 
 using namespace VSTGUI;
 using namespace std;
 
-
-#if USE_RUNTIME_LOADED_FONTS
 CFontRef displayFont = NULL;
 CFontRef patchNameFont = NULL;
 CFontRef lfoTypeFont = NULL;
-#else
-
-#if LINUX
-SharedPointer<CFontDesc> minifont = new CFontDesc("sans-serif", 9);
-SharedPointer<CFontDesc> patchfont = new CFontDesc("sans-serif", 14);
-SharedPointer<CFontDesc> lfofont = new CFontDesc("sans-serif", 8);
-#endif
-
-CFontRef displayFont = minifont;
-CFontRef patchNameFont = patchfont;
-CFontRef lfoTypeFont = lfofont;
-#endif
+CFontRef aboutFont = NULL;
 
 
 enum special_tags
@@ -74,6 +64,7 @@ enum special_tags
    tag_fx_select,
    tag_fx_menu,
    tag_patchname,
+   tag_statuspanel,
    tag_mp_category,
    tag_mp_patch,
    tag_store,
@@ -83,6 +74,7 @@ enum special_tags
    tag_store_category,
    tag_store_creator,
    tag_store_comments,
+   tag_store_tuning,
    tag_mod_source0,
    tag_mod_source_end = tag_mod_source0 + n_modsources,
    tag_settingsmenu,
@@ -91,7 +83,7 @@ enum special_tags
    start_paramtags,
 };
 
-SurgeGUIEditor::SurgeGUIEditor(void* effect, SurgeSynthesizer* synth) : super(effect)
+SurgeGUIEditor::SurgeGUIEditor(void* effect, SurgeSynthesizer* synth, void* userdata) : super(effect)
 {
    frame = 0;
 
@@ -101,6 +93,7 @@ SurgeGUIEditor::SurgeGUIEditor(void* effect, SurgeSynthesizer* synth) : super(ef
 #endif
 
    patchname = 0;
+   statuspanel = nullptr;
    current_scene = 1;
    current_osc = 0;
    current_fx = 0;
@@ -113,10 +106,26 @@ SurgeGUIEditor::SurgeGUIEditor(void* effect, SurgeSynthesizer* synth) : super(ef
    mod_editor = false;
 
    // init the size of the plugin
+   int userDefaultZoomFactor = Surge::Storage::getUserDefaultValue(&(synth->storage), "defaultZoom", 100);
+   float zf = userDefaultZoomFactor / 100.0;
+
+   if( synth->storage.getPatch().dawExtraState.isPopulated &&
+       synth->storage.getPatch().dawExtraState.instanceZoomFactor > 0
+       )
+   {
+       // If I restore state before I am constructed I need to do this
+       zf = synth->storage.getPatch().dawExtraState.instanceZoomFactor / 100.0;
+   }
+   
    rect.left = 0;
    rect.top = 0;
+#if TARGET_VST2 || TARGET_VST3   
+   rect.right = WINDOW_SIZE_X * zf;
+   rect.bottom = WINDOW_SIZE_Y * zf;
+#else
    rect.right = WINDOW_SIZE_X;
    rect.bottom = WINDOW_SIZE_Y;
+#endif   
    editor_open = false;
    queue_refresh = false;
    memset(param, 0, 1024 * sizeof(void*));
@@ -142,25 +151,20 @@ SurgeGUIEditor::SurgeGUIEditor(void* effect, SurgeSynthesizer* synth) : super(ef
    idleinc = 0;
 
    _effect = effect;
+   _userdata = userdata;
    this->synth = synth;
 
    // ToolTipWnd = 0;
 
-#if TARGET_VST3
-   _idleTimer = new CVSTGUITimer([this](CVSTGUITimer* timer) { idle(); }, 50, false);
-#endif
-   
    minimumZoom = 50;
 #if LINUX
    minimumZoom = 100; // See github issue #628
 #endif
 
    zoom_callback = [](SurgeGUIEditor* f) {};
-   int userDefaultZoomFactor = Surge::Storage::getUserDefaultValue(&(synth->storage), "defaultZoom", 100);
    setZoomFactor(userDefaultZoomFactor);
    zoomInvalid = (userDefaultZoomFactor != 100);
 
-#if USE_RUNTIME_LOADED_FONTS
    /*
    ** As documented in RuntimeFonts.h, the contract of this function is to side-effect
    ** onto globals displayFont and patchNameFont with valid fonts from the runtime
@@ -185,19 +189,39 @@ SurgeGUIEditor::SurgeGUIEditor(void* effect, SurgeSynthesizer* synth) : super(ef
 #if MAC
        SharedPointer<CFontDesc> minifont = new CFontDesc("Lucida Grande", 9);
        SharedPointer<CFontDesc> patchfont = new CFontDesc("Lucida Grande", 14);
+       SharedPointer<CFontDesc> lfofont = new CFontDesc("Lucida Grande", 8);
+       SharedPointer<CFontDesc> aboutfont = new CFontDesc("Lucida Grande", 10);
 #elif LINUX
        SharedPointer<CFontDesc> minifont = new CFontDesc("sans-serif", 9);
        SharedPointer<CFontDesc> patchfont = new CFontDesc("sans-serif", 14);
+       SharedPointer<CFontDesc> lfofont = new CFontDesc("sans-serif", 8);
+       SharedPointer<CFontDesc> aboutfont = new CFontDesc("sans-serif", 10);
 #else
        SharedPointer<CFontDesc> minifont = new CFontDesc("Microsoft Sans Serif", 9);
        SharedPointer<CFontDesc> patchfont = new CFontDesc("Arial", 14);
+       SharedPointer<CFontDesc> lfofont = new CFontDesc("Microsoft Sans Serif", 8 );
+       SharedPointer<CFontDesc> aboutfont = new CFontDesc("Microsoft Sans Serif", 10 );
 #endif
 
        displayFont = minifont;
        patchNameFont = patchfont;
+       lfoTypeFont = lfofont;
+       aboutFont = aboutfont;
 
    }
-#endif
+
+   /*
+   ** See the comment in SurgeParamConfig.h
+   */
+   if(Surge::ParamConfig::kHorizontal != VSTGUI::CSlider::kHorizontal ||
+      Surge::ParamConfig::kVertical != VSTGUI::CSlider::kVertical
+       )
+   {
+       throw new Surge::Error("Software Error: Param MisMaptch" );
+   }
+
+   for( int i=0; i<n_modsources; ++i )
+      modsource_is_alternate[i] = false;
 }
 
 SurgeGUIEditor::~SurgeGUIEditor()
@@ -205,8 +229,7 @@ SurgeGUIEditor::~SurgeGUIEditor()
    if (frame)
    {
       getFrame()->unregisterKeyboardHook(this);
-      frame->removeAll(true);
-      frame->forget();
+      frame->close();
    }
 }
 
@@ -242,9 +265,10 @@ void SurgeGUIEditor::idle()
 
             for (int i = 1; i < n_modsources; i++)
             {
-               ((CModulationSourceButton*)gui_modsrc[i])
-                   ->update_rt_vals(synth->isActiveModulation(ptag, (modsources)i), 0,
-                                    synth->isModsourceUsed((modsources)i));
+               if( gui_modsrc[i] )
+                  ((CModulationSourceButton*)gui_modsrc[i])
+                     ->update_rt_vals(synth->isActiveModulation(ptag, (modsources)i), 0,
+                                      synth->isModsourceUsed((modsources)i));
             }
             synth->storage.CS_ModRouting.leave();
          }
@@ -254,14 +278,20 @@ void SurgeGUIEditor::idle()
          synth->storage.CS_ModRouting.enter();
          for (int i = 1; i < n_modsources; i++)
          {
-            ((CModulationSourceButton*)gui_modsrc[i])
-                ->update_rt_vals(false, 0, synth->isModsourceUsed((modsources)i));
+            if( gui_modsrc[i] )
+               ((CModulationSourceButton*)gui_modsrc[i])
+                  ->update_rt_vals(false, 0, synth->isModsourceUsed((modsources)i));
          }
          synth->storage.CS_ModRouting.leave();
       }
-#if MAC || LINUX
+#if MAC
       idleinc++;
       if (idleinc > 15)
+      {
+         idleinc = 0;
+#elif LINUX // slow down the blinking on linux a bit
+      idleinc++;
+      if (idleinc > 50)
       {
          idleinc = 0;
 #else
@@ -273,7 +303,8 @@ void SurgeGUIEditor::idle()
 #endif
          for (int i = 1; i < n_modsources; i++)
          {
-            ((CModulationSourceButton*)gui_modsrc[i])->setblink(blinkstate);
+            if( gui_modsrc[i] )
+               ((CModulationSourceButton*)gui_modsrc[i])->setblink(blinkstate);
          }
          blinkstate = !blinkstate;
       }
@@ -288,6 +319,15 @@ void SurgeGUIEditor::idle()
          }
       }
 
+#if OSC_MOD_ANIMATION
+      if (mod_editor && oscdisplay)
+      {
+         ((COscillatorDisplay*)oscdisplay)->tickModTime();
+         oscdisplay->setDirty(true);
+         oscdisplay->invalid();
+      }
+#endif
+
       if (polydisp)
       {
          CNumberField *cnpd = static_cast< CNumberField* >( polydisp );
@@ -297,7 +337,21 @@ void SurgeGUIEditor::idle()
              cnpd->invalid();
       }
 
-      if (queue_refresh || synth->refresh_editor)
+      bool patchChanged = false;
+      if (patchname)
+      {
+          patchChanged = ((CPatchBrowser *)patchname)->sel_id != synth->patchid;
+      }
+
+      if( statuspanel )
+      {
+          CStatusPanel *pb = (CStatusPanel *)statuspanel;
+          pb->setDisplayFeature(CStatusPanel::mpeMode, synth->mpeEnabled);
+          pb->setDisplayFeature(CStatusPanel::tuningMode, ! synth->storage.isStandardTuning);
+      }
+
+      
+      if (queue_refresh || synth->refresh_editor || patchChanged)
       {
          queue_refresh = false;
          synth->refresh_editor = false;
@@ -312,9 +366,11 @@ void SurgeGUIEditor::idle()
          }
          if (patchname)
          {
+            ((CPatchBrowser*)patchname)->sel_id = synth->patchid;
             ((CPatchBrowser*)patchname)->setLabel(synth->storage.getPatch().name);
             ((CPatchBrowser*)patchname)->setCategory(synth->storage.getPatch().category);
             ((CPatchBrowser*)patchname)->setAuthor(synth->storage.getPatch().author);
+            patchname->invalid();
          }
       }
 
@@ -378,6 +434,17 @@ void SurgeGUIEditor::idle()
                param[j]->setValue(synth->refresh_ctrl_queue_value[i]);
                frame->invalidRect(param[j]->getViewSize());
                // oscdisplay->invalid();
+
+               if( oscdisplay )
+               {
+                  ((COscillatorDisplay*)oscdisplay)->invalidateIfIdIsInRange(j);
+               }
+
+               if( lfodisplay )
+               {
+                  ((CLFOGui*)lfodisplay)->invalidateIfIdIsInRange(j);
+               }
+
             }
          }
       }
@@ -391,15 +458,25 @@ void SurgeGUIEditor::idle()
             {
                param[j]->setValue(synth->getParameter01(j));
                frame->invalidRect(param[j]->getViewSize());
+
+               if( oscdisplay )
+               {
+                  ((COscillatorDisplay*)oscdisplay)->invalidateIfIdIsInRange(j);
+               }
+
+               if( lfodisplay )
+               {
+                  ((CLFOGui*)lfodisplay)->invalidateIfIdIsInRange(j);
+               }
             }
             else if ((j >= metaparam_offset) && (j < (metaparam_offset + n_customcontrollers)))
             {
                int cc = j - metaparam_offset;
                gui_modsrc[ms_ctrl1 + cc]->setValue(
-                   ((ControllerModulationSource*)synth->storage.getPatch()
-                        .scene[0]
-                        .modsources[ms_ctrl1 + i])
-                       ->get_target01());
+                  ((ControllerModulationSource*)synth->storage.getPatch()
+                   .scene[0]
+                   .modsources[ms_ctrl1 + i])
+                  ->get_target01());
             }
             else if((j < n_total_params) && nonmod_param[j])
             {
@@ -463,6 +540,12 @@ void SurgeGUIEditor::toggle_mod_editing()
 
 void SurgeGUIEditor::refresh_mod()
 {
+   CModulationSourceButton *cms = (CModulationSourceButton *)gui_modsrc[modsource];
+
+   modsources thisms = modsource;
+   if( cms->hasAlternate && cms->useAlternate )
+      thisms = (modsources)cms->alternateId;
+   
    synth->storage.CS_ModRouting.enter();
    for (int i = 0; i < 512; i++)
    {
@@ -473,13 +556,23 @@ void SurgeGUIEditor::refresh_mod()
          {
             s->setModMode(mod_editor ? 1 : 0);
             s->setModPresent(synth->isModDestUsed(i));
-            s->setModCurrent(synth->isActiveModulation(i, modsource));
+            s->setModCurrent(synth->isActiveModulation(i, thisms));
          }
          // s->setDirty();
-         s->setModValue(synth->getModulation(i, modsource));
+         s->setModValue(synth->getModulation(i, thisms));
          s->invalid();
       }
    }
+#if OSC_MOD_ANIMATION
+   if (oscdisplay)
+   {
+      ((COscillatorDisplay*)oscdisplay)->setIsMod(mod_editor);
+      ((COscillatorDisplay*)oscdisplay)->setModSource(thisms);
+      oscdisplay->invalid();
+      oscdisplay->setDirty(true);
+   }
+#endif
+
    synth->storage.CS_ModRouting.leave();
    for (int i = 1; i < n_modsources; i++)
    {
@@ -488,8 +581,11 @@ void SurgeGUIEditor::refresh_mod()
          state = mod_editor ? 2 : 1;
       if (i == modsource_editor)
          state |= 4;
-      ((CModulationSourceButton*)gui_modsrc[i])->state = state;
-      ((CModulationSourceButton*)gui_modsrc[i])->invalid();
+      if( gui_modsrc[i] )
+      {
+         ((CModulationSourceButton*)gui_modsrc[i])->state = state;
+         ((CModulationSourceButton*)gui_modsrc[i])->invalid();
+      }
    }
 
    // ctnvg	frame->redraw();
@@ -512,26 +608,6 @@ int32_t SurgeGUIEditor::onKeyDown(const VstKeyCode& code, CFrame* frame)
             }
             toggle_mod_editing();
             return 1;
-#if !LINUX
-            /* 
-            ** On linux the arrow keys navigate menus but do it in the same window as the
-            ** UI, so this eating of the key causes core dumps and makes menus non-navigable.
-            ** (On Mac and Win menus are separate parent windows so have a different 
-            ** event loop)
-            */
-        case VKEY_LEFT:
-            synth->incrementCategory(false);
-            return 1;
-        case VKEY_RIGHT:
-            synth->incrementCategory(true);
-            return 1;
-        case VKEY_UP:
-            synth->incrementPatch(false);
-            return 1;
-        case VKEY_DOWN:
-            synth->incrementPatch(true);
-            return 1;
-#endif
         }
     }
     else
@@ -541,6 +617,18 @@ int32_t SurgeGUIEditor::onKeyDown(const VstKeyCode& code, CFrame* frame)
         case '+':
             setZoomFactor(getZoomFactor()+10);
             return 1;
+        case '=':
+           /*
+           ** This is a bit unsatisfying. The '+' key on linux with a US standard
+           ** keyboard delivers as = with a shift modifier. I dislike hardcoding keyboard
+           ** layouts but I don't see an API and this is a commonly used feature
+           */
+           if (code.modifier == VstModifierKey::MODIFIER_SHIFT)
+           {
+              setZoomFactor(getZoomFactor()+10);
+              return 1;
+           }
+           break;
         case '-':
             setZoomFactor(getZoomFactor()-10);
             return 1;
@@ -604,7 +692,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
       CRect rect(0, 0, 75, 13);
       rect.offset(104 - 36, 69);
       CControl* oscswitch = new CHSwitch2(rect, this, tag_osc_select, 3, 13, 1, 3,
-                                          getSurgeBitmap(IDB_OSCSELECT), nopoint);
+                                          bitmapStore->getBitmap(IDB_OSCSELECT), nopoint);
       oscswitch->setValue((float)current_osc / 2.0f);
       frame->addView(oscswitch);
    }
@@ -612,7 +700,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
    {
       CRect rect(0, 0, 119, 51);
       rect.offset(764 + 3, 71);
-      CEffectSettings* fc = new CEffectSettings(rect, this, tag_fx_select, current_fx);
+      CEffectSettings* fc = new CEffectSettings(rect, this, tag_fx_select, current_fx, bitmapStore);
       ccfxconf = fc;
       for (int i = 0; i < 8; i++)
       {
@@ -624,9 +712,11 @@ void SurgeGUIEditor::openOrRecreateEditor()
    }
 
    int rws = 15;
-   for (int k = 1; k < n_modsources; k++)
+   /* This loop bound is 1.6.* valid ONLY */
+   for (int k = 1; k < /* n_modsources */ ms_releasevelocity; k++)
    {
       modsources ms = (modsources)k;
+
       CRect r = positionForModulationGrid(ms);
 
       int state = 0;
@@ -635,7 +725,8 @@ void SurgeGUIEditor::openOrRecreateEditor()
       if (ms == modsource_editor)
          state |= 4;
 
-      gui_modsrc[ms] = new CModulationSourceButton(r, this, tag_mod_source0 + ms, state, ms);
+      gui_modsrc[ms] =
+          new CModulationSourceButton(r, this, tag_mod_source0 + ms, state, ms, bitmapStore);
       ((CModulationSourceButton*)gui_modsrc[ms])
           ->update_rt_vals(false, 0, synth->isModsourceUsed(ms));
       if ((ms >= ms_ctrl1) && (ms <= ms_ctrl8))
@@ -652,6 +743,15 @@ void SurgeGUIEditor::openOrRecreateEditor()
       else
       {
          ((CModulationSourceButton*)gui_modsrc[ms])->setlabel(modsource_abberations_button[ms]);
+         /*
+         ** Velocity special case for 1.6.* vintage
+         */
+         if( ms == ms_velocity )
+         {
+            ((CModulationSourceButton*)gui_modsrc[ms])->setAlternate(ms_releasevelocity,
+                                                                     modsource_abberations_button[ms_releasevelocity]);
+            ((CModulationSourceButton*)gui_modsrc[ms])->setUseAlternate(modsource_is_alternate[ms]);
+         }
       }
       frame->addView(gui_modsrc[ms]);
    }
@@ -719,24 +819,37 @@ void SurgeGUIEditor::openOrRecreateEditor()
 
    // 150*b - 16 = 434 (b=3)
    patchname =
-       new CPatchBrowser(CRect(156, 11, 591, 11 + 28), this, tag_patchname, &synth->storage);
+       new CPatchBrowser(CRect(156, 11, 547, 11 + 28), this, tag_patchname, &synth->storage);
    ((CPatchBrowser*)patchname)->setLabel(synth->storage.getPatch().name);
    ((CPatchBrowser*)patchname)->setCategory(synth->storage.getPatch().category);
    ((CPatchBrowser*)patchname)->setIDs(synth->current_category_id, synth->patchid);
    ((CPatchBrowser*)patchname)->setAuthor(synth->storage.getPatch().author);
    frame->addView(patchname);
 
+   statuspanel = new CStatusPanel(CRect( 560, 1, 595, 54 ), this, tag_statuspanel, &synth->storage);
+   {
+       CStatusPanel *pb = (CStatusPanel *)statuspanel;
+       pb->setDisplayFeature(CStatusPanel::mpeMode, synth->mpeEnabled);
+       pb->setDisplayFeature(CStatusPanel::tuningMode, ! synth->storage.isStandardTuning);
+       pb->setEditor(this);
+   }
+
+   frame->addView(statuspanel);
+   
    CHSwitch2* mp_cat =
        new CHSwitch2(CRect(157, 41, 157 + 37, 41 + 12), this, tag_mp_category, 2, 12, 1, 2,
-                     getSurgeBitmap(IDB_BUTTON_MINUSPLUS), nopoint, false);
+                     bitmapStore->getBitmap(IDB_BUTTON_MINUSPLUS), nopoint, false);
+   mp_cat->setUsesMouseWheel(false); // mousewheel on category and patch buttons is undesirable     
    frame->addView(mp_cat);
 
-   CHSwitch2* mp_patch = new CHSwitch2(CRect(242, 41, 242 + 37, 41 + 12), this, tag_mp_patch, 2, 12,
-                                       1, 2, getSurgeBitmap(IDB_BUTTON_MINUSPLUS), nopoint, false);
+   CHSwitch2* mp_patch =
+       new CHSwitch2(CRect(242, 41, 242 + 37, 41 + 12), this, tag_mp_patch, 2, 12, 1, 2,
+                     bitmapStore->getBitmap(IDB_BUTTON_MINUSPLUS), nopoint, false);
+   mp_patch->setUsesMouseWheel(false);// mousewheel on category and patch buttons is undesirable                                
    frame->addView(mp_patch);
 
-   CHSwitch2* b_store = new CHSwitch2(CRect(591 - 37, 41, 591, 41 + 12), this, tag_store, 1, 12, 1,
-                                      1, getSurgeBitmap(IDB_BUTTON_STORE), nopoint, false);
+   CHSwitch2* b_store = new CHSwitch2(CRect(547 - 37, 41, 547, 41 + 12), this, tag_store, 1, 12, 1,
+                                      1, bitmapStore->getBitmap(IDB_BUTTON_STORE), nopoint, false);
    frame->addView(b_store);
 
    memset(param, 0, 1024 * sizeof(void*)); // see the correct size in SurgeGUIEditor.h
@@ -758,7 +871,9 @@ void SurgeGUIEditor::openOrRecreateEditor()
          {
          case ct_decibel:
          case ct_decibel_narrow:
+         case ct_decibel_narrow_extendable:
          case ct_decibel_extra_narrow:
+         case ct_decibel_extendable:
          case ct_freq_mod:
          case ct_percent_bidirectional:
          case ct_freq_shift:
@@ -773,7 +888,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 129, 18);
             rect.offset(p->posx - 2, p->posy + 1);
             CControl* hsw = new CHSwitch2(rect, this, p->id + start_paramtags, 10, 18, 1, 10,
-                                          getSurgeBitmap(IDB_FILTERBUTTONS), nopoint, true);
+                                          bitmapStore->getBitmap(IDB_FILTERBUTTONS), nopoint, true);
             rect(3, 0, 124, 14);
             rect.offset(p->posx, p->posy);
             hsw->setMouseableArea(rect);
@@ -787,7 +902,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 12, 18);
             rect.offset(p->posx + 129, p->posy + 1);
             CControl* hsw = new CSwitchControl(rect, this, p->id + start_paramtags,
-                                               getSurgeBitmap(IDB_FILTERSUBTYPE));
+                                               bitmapStore->getBitmap(IDB_FILTERSUBTYPE));
             rect(1, 1, 9, 14);
             ((CSwitchControl*)hsw)->is_itype = true;
             ((CSwitchControl*)hsw)->imax = 3;
@@ -819,7 +934,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 43, 7);
             rect.offset(p->posx, p->posy);
             CControl* hsw = new CSwitchControl(rect, this, p->id + start_paramtags,
-                                               getSurgeBitmap(IDB_SWITCH_KTRK));
+                                               bitmapStore->getBitmap(IDB_SWITCH_KTRK));
             hsw->setValue(p->get_value_f01());
             frame->addView(hsw);
             nonmod_param[i] = hsw;
@@ -830,7 +945,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 43, 7);
             rect.offset(p->posx, p->posy);
             CControl* hsw = new CSwitchControl(rect, this, p->id + start_paramtags,
-                                               getSurgeBitmap(IDB_SWITCH_RETRIGGER));
+                                               bitmapStore->getBitmap(IDB_SWITCH_RETRIGGER));
             hsw->setValue(p->get_value_f01());
             frame->addView(hsw);
             nonmod_param[i] = hsw;
@@ -841,7 +956,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 22, 15);
             rect.offset(p->posx, p->posy);
             CControl* hsw = new CHSwitch2(rect, this, p->id + start_paramtags, 3, 15, 1, 3,
-                                          getSurgeBitmap(IDB_OSCROUTE), nopoint, true);
+                                          bitmapStore->getBitmap(IDB_OSCROUTE), nopoint, true);
             hsw->setValue(p->get_value_f01());
             frame->addView(hsw);
             nonmod_param[i] = hsw;
@@ -859,7 +974,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
                CRect rect(0, 0, 20, 14);
                rect.offset(p->posx, p->posy);
                CHSwitch2* hsw = new CHSwitch2(rect, this, p->id + start_paramtags, 3, 14, 1, 3,
-                                              getSurgeBitmap(IDB_ENVSHAPE), nopoint, true);
+                                              bitmapStore->getBitmap(IDB_ENVSHAPE), nopoint, true);
                hsw->setValue(p->get_value_f01());
                if (p->name[0] == 'd')
                   hsw->imgoffset = 3;
@@ -876,7 +991,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 34, 15);
             rect.offset(p->posx, p->posy);
             CHSwitch2* hsw = new CHSwitch2(rect, this, p->id + start_paramtags, 2, 15, 2, 1,
-                                           getSurgeBitmap(IDB_ENVMODE), nopoint, false);
+                                           bitmapStore->getBitmap(IDB_ENVMODE), nopoint, false);
             hsw->setValue(p->get_value_f01());
 
             frame->addView(hsw);
@@ -888,7 +1003,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 51, 39);
             rect.offset(p->posx, p->posy);
             CControl* hsw = new CHSwitch2(rect, this, p->id + start_paramtags, 3, 39, 3, 1,
-                                          getSurgeBitmap(IDB_LFOTRIGGER), nopoint, true);
+                                          bitmapStore->getBitmap(IDB_LFOTRIGGER), nopoint, true);
             hsw->setValue(p->get_value_f01());
             frame->addView(hsw);
             nonmod_param[i] = hsw;
@@ -899,7 +1014,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 22, 15);
             rect.offset(p->posx, p->posy);
             CControl* hsw = new CSwitchControl(rect, this, p->id + start_paramtags,
-                                               getSurgeBitmap(IDB_SWITCH_MUTE));
+                                               bitmapStore->getBitmap(IDB_SWITCH_MUTE));
             hsw->setValue(p->get_value_f01());
             frame->addView(hsw);
             nonmod_param[i] = hsw;
@@ -910,7 +1025,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 22, 15);
             rect.offset(p->posx, p->posy);
             CControl* hsw = new CSwitchControl(rect, this, p->id + start_paramtags,
-                                               getSurgeBitmap(IDB_SWITCH_SOLO));
+                                               bitmapStore->getBitmap(IDB_SWITCH_SOLO));
             hsw->setValue(p->get_value_f01());
             frame->addView(hsw);
             nonmod_param[i] = hsw;
@@ -921,7 +1036,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 51, 15);
             rect.offset(p->posx, p->posy);
             CControl* hsw = new CSwitchControl(rect, this, p->id + start_paramtags,
-                                               getSurgeBitmap(IDB_UNIPOLAR));
+                                               bitmapStore->getBitmap(IDB_UNIPOLAR));
             hsw->setValue(p->get_value_f01());
             frame->addView(hsw);
             nonmod_param[i] = hsw;
@@ -932,7 +1047,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 12, 18);
             rect.offset(p->posx + 129, p->posy + 5);
             CControl* hsw = new CSwitchControl(rect, this, p->id + start_paramtags,
-                                               getSurgeBitmap(IDB_RELATIVE_TOGGLE));
+                                               bitmapStore->getBitmap(IDB_RELATIVE_TOGGLE));
             rect(1, 1, 9, 14);
             rect.offset(p->posx + 129, p->posy + 5);
             hsw->setMouseableArea(rect);
@@ -945,7 +1060,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 12, 18);
             rect.offset(p->posx + 129, p->posy + 5);
             CControl* hsw = new CSwitchControl(rect, this, p->id + start_paramtags,
-                                               getSurgeBitmap(IDB_SWITCH_LINK));
+                                               bitmapStore->getBitmap(IDB_SWITCH_LINK));
             rect(1, 1, 9, 14);
             rect.offset(p->posx + 129, p->posy + 5);
             hsw->setMouseableArea(rect);
@@ -957,9 +1072,9 @@ void SurgeGUIEditor::openOrRecreateEditor()
          {
             CRect rect(0, 0, 41, 18);
             rect.offset(p->posx + 96, p->posy + 1);
-            CControl* hsw =
-                new COscMenu(rect, this, tag_osc_menu, &synth->storage,
-                             &synth->storage.getPatch().scene[current_scene].osc[current_osc]);
+            CControl* hsw = new COscMenu(
+                rect, this, tag_osc_menu, &synth->storage,
+                &synth->storage.getPatch().scene[current_scene].osc[current_osc], bitmapStore);
             hsw->setValue(p->get_value_f01());
             frame->addView(hsw);
          }
@@ -982,7 +1097,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 28, 47);
             rect.offset(p->posx, p->posy);
             CControl* hsw = new CHSwitch2(rect, this, p->id + start_paramtags, 6, 47, 6, 1,
-                                          getSurgeBitmap(IDB_WAVESHAPER), nopoint, true);
+                                          bitmapStore->getBitmap(IDB_WAVESHAPER), nopoint, true);
             rect(0, 0, 28, 47);
             rect.offset(p->posx, p->posy);
             hsw->setMouseableArea(rect);
@@ -996,7 +1111,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 50, 47);
             rect.offset(p->posx, p->posy);
             CControl* hsw = new CHSwitch2(rect, this, p->id + start_paramtags, 6, 47, 6, 1,
-                                          getSurgeBitmap(IDB_POLYMODE), nopoint, true);
+                                          bitmapStore->getBitmap(IDB_POLYMODE), nopoint, true);
             rect(0, 0, 50, 47);
             rect.offset(p->posx, p->posy);
             hsw->setMouseableArea(rect);
@@ -1010,7 +1125,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 135, 27);
             rect.offset(p->posx, p->posy);
             CControl* hsw = new CHSwitch2(rect, this, p->id + start_paramtags, 4, 27, 1, 4,
-                                          getSurgeBitmap(IDB_FXBYPASS), nopoint, true);
+                                          bitmapStore->getBitmap(IDB_FXBYPASS), nopoint, true);
             fxbypass_tag = p->id + start_paramtags;
             rect(2, 2, 133, 25);
             rect.offset(p->posx, p->posy);
@@ -1025,7 +1140,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 96, 18);
             rect.offset(p->posx, p->posy + 1);
             CControl* hsw = new CHSwitch2(rect, this, p->id + start_paramtags, 7, 18, 1, 7,
-                                          getSurgeBitmap(IDB_OCTAVES), nopoint, true);
+                                          bitmapStore->getBitmap(IDB_OCTAVES), nopoint, true);
             rect(1, 0, 91, 14);
             rect.offset(p->posx, p->posy);
             hsw->setMouseableArea(rect);
@@ -1039,7 +1154,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 134, 52);
             rect.offset(p->posx, p->posy);
             CControl* hsw = new CHSwitch2(rect, this, p->id + start_paramtags, 8, 52, 1, 8,
-                                          getSurgeBitmap(IDB_FBCONFIG), nopoint, true);
+                                          bitmapStore->getBitmap(IDB_FBCONFIG), nopoint, true);
             hsw->setValue(p->get_value_f01());
             frame->addView(hsw);
             nonmod_param[i] = hsw;
@@ -1051,7 +1166,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 134, 52);
             rect.offset(p->posx, p->posy);
             CControl* hsw = new CHSwitch2(rect, this, p->id + start_paramtags, 4, 52, 1, 4,
-                                          getSurgeBitmap(IDB_FMCONFIG), nopoint, true);
+                                          bitmapStore->getBitmap(IDB_FMCONFIG), nopoint, true);
             hsw->setValue(p->get_value_f01());
             frame->addView(hsw);
             nonmod_param[i] = hsw;
@@ -1062,7 +1177,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 36, 27);
             rect.offset(p->posx, p->posy);
             CControl* hsw = new CHSwitch2(rect, this, p->id + start_paramtags, 3, 27, 3, 1,
-                                          getSurgeBitmap(IDB_SCENEMODE), nopoint, true);
+                                          bitmapStore->getBitmap(IDB_SCENEMODE), nopoint, true);
             rect(1, 1, 35, 27);
             rect.offset(p->posx, p->posy);
             hsw->setMouseableArea(rect);
@@ -1093,7 +1208,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 51, 27);
             rect.offset(p->posx, p->posy);
             CControl* sceneswitch = new CHSwitch2(rect, this, tag_scene_select, 2, 27, 1, 2,
-                                                  getSurgeBitmap(IDB_SCENESWITCH), nopoint);
+                                                  bitmapStore->getBitmap(IDB_SCENESWITCH), nopoint);
             sceneswitch->setValue(p->get_value_f01());
             rect(1, 1, 50, 26);
             rect.offset(p->posx, p->posy);
@@ -1106,7 +1221,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
             CRect rect(0, 0, 135, 12);
             rect.offset(p->posx, p->posy);
             CControl* hsw = new CHSwitch2(rect, this, p->id + start_paramtags, 3, 12, 1, 3,
-                                          getSurgeBitmap(IDB_CHARACTER), nopoint, true);
+                                          bitmapStore->getBitmap(IDB_CHARACTER), nopoint, true);
             hsw->setValue(p->get_value_f01());
             frame->addView(hsw);
             nonmod_param[i] = hsw;
@@ -1152,8 +1267,9 @@ void SurgeGUIEditor::openOrRecreateEditor()
          {
             if (synth->isValidModulation(p->id, modsource))
             {
-               CSurgeSlider* hs = new CSurgeSlider(CPoint(p->posx, p->posy + p->posy_offset * yofs),
-                                                   style, this, p->id + start_paramtags, true);
+               CSurgeSlider* hs =
+                   new CSurgeSlider(CPoint(p->posx, p->posy + p->posy_offset * yofs), style, this,
+                                    p->id + start_paramtags, true, bitmapStore);
                hs->setModMode(mod_editor ? 1 : 0);
                hs->setModValue(synth->getModulation(p->id, modsource));
                hs->setModPresent(synth->isModDestUsed(p->id));
@@ -1166,8 +1282,9 @@ void SurgeGUIEditor::openOrRecreateEditor()
             }
             else
             {
-               CSurgeSlider* hs = new CSurgeSlider(CPoint(p->posx, p->posy + p->posy_offset * yofs),
-                                                   style, this, p->id + start_paramtags);
+               CSurgeSlider* hs =
+                   new CSurgeSlider(CPoint(p->posx, p->posy + p->posy_offset * yofs), style, this,
+                                    p->id + start_paramtags, false, bitmapStore);
                hs->setValue(p->get_value_f01());
                hs->setDefaultValue(p->get_default_value_f01());
                hs->setLabel(p->get_name());
@@ -1224,20 +1341,22 @@ void SurgeGUIEditor::openOrRecreateEditor()
 
    CRect aboutbrect(892 - 37, 526, 892, 526 + 12);
 
-   CHSwitch2* b_settingsMenu = new CHSwitch2(aboutbrect, this, tag_settingsmenu, 1, 27, 1, 1,
-                                             getSurgeBitmap(IDB_BUTTON_MENU), nopoint, false);
+   CHSwitch2* b_settingsMenu =
+       new CHSwitch2(aboutbrect, this, tag_settingsmenu, 1, 27, 1, 1,
+                     bitmapStore->getBitmap(IDB_BUTTON_MENU), nopoint, false);
    frame->addView(b_settingsMenu);
 
    infowindow = new CParameterTooltip(CRect(0, 0, 0, 0));
    frame->addView(infowindow);
 
    CRect wsize(0, 0, WINDOW_SIZE_X, WINDOW_SIZE_Y);
-   aboutbox = new CAboutBox(aboutbrect, this, 0, 0, wsize, nopoint, getSurgeBitmap(IDB_ABOUT));
+   aboutbox =
+       new CAboutBox(aboutbrect, this, 0, 0, wsize, nopoint, bitmapStore->getBitmap(IDB_ABOUT));
    frame->addView(aboutbox);
 
    CRect dialogSize(148, 8, 598, 8 + 182);
    saveDialog = new CViewContainer(dialogSize);
-   saveDialog->setBackground(getSurgeBitmap(IDB_STOREPATCH));
+   saveDialog->setBackground(bitmapStore->getBitmap(IDB_STOREPATCH));
    saveDialog->setVisible(false);
    frame->addView(saveDialog);
 
@@ -1252,6 +1371,16 @@ void SurgeGUIEditor::openOrRecreateEditor()
    patchCategory = new CTextEdit(CRect(CPoint(96, 58), CPoint(340, 21)), this, tag_store_category);
    patchCreator = new CTextEdit(CRect(CPoint(96, 85), CPoint(340, 21)), this, tag_store_creator);
    patchComment = new CTextEdit(CRect(CPoint(96, 112), CPoint(340, 21)), this, tag_store_comments);
+   patchTuning = new CCheckBox(CRect(CPoint(96, 112 + (112-85) ), CPoint( 21, 21 )), this, tag_store_tuning);
+   patchTuningLabel = new CTextLabel(CRect(CPoint(96 + 22, 112 + (112-85) ), CPoint( 200, 21 )));
+   patchTuningLabel->setText( "Save Tuning in Patch" );
+   patchTuningLabel->sizeToFit();
+   
+   // Mouse behavior
+   if (CSurgeSlider::sliderMoveRateState == CSurgeSlider::kUnInitialized)
+      CSurgeSlider::sliderMoveRateState =
+          (CSurgeSlider::MoveRateState)Surge::Storage::getUserDefaultValue(
+              &(synth->storage), "sliderMoveRateState", (int)CSurgeSlider::kClassic);
 
    /*
     * There is, apparently, a bug in VSTGui that focus events don't fire reliably on some mac hosts.
@@ -1271,7 +1400,7 @@ void SurgeGUIEditor::openOrRecreateEditor()
    patchCategory->setBackColor(kWhiteCColor);
    patchCreator->setBackColor(kWhiteCColor);
    patchComment->setBackColor(kWhiteCColor);
-
+   
    patchName->setFontColor(kBlackCColor);
    patchCategory->setFontColor(kBlackCColor);
    patchCreator->setFontColor(kBlackCColor);
@@ -1282,11 +1411,19 @@ void SurgeGUIEditor::openOrRecreateEditor()
    patchCreator->setFrameColor(kGreyCColor);
    patchComment->setFrameColor(kGreyCColor);
 
+   CColor bggr(205,206,212);
+   patchTuningLabel->setBackColor(bggr);
+   patchTuningLabel->setFrameColor(bggr);
+   patchTuningLabel->setFontColor(kBlackCColor);
+   
    saveDialog->addView(patchName);
    saveDialog->addView(patchCategory);
    saveDialog->addView(patchCreator);
    saveDialog->addView(patchComment);
-
+   saveDialog->addView(patchTuning);
+   saveDialog->addView(patchTuningLabel);
+                               
+                               
    editor_open = true;
    queue_refresh = false;
    frame->setDirty();
@@ -1301,12 +1438,29 @@ void SurgeGUIEditor::close_editor()
    setzero(param);
 }
 
+#if LINUX && TARGET_VST3
+extern void LinuxVST3Init(Steinberg::Linux::IRunLoop* pf);
+extern void LinuxVST3Detatch();
+extern void LinuxVST3FrameOpen(CFrame* that, void*, const VSTGUI::PlatformType& pt);
+#endif
+
 #if !TARGET_VST3
 bool SurgeGUIEditor::open(void* parent)
 #else
 bool PLUGIN_API SurgeGUIEditor::open(void* parent, const PlatformType& platformType)
 #endif
 {
+   if (samplerate == 0)
+   {
+      std::cout << "SampleRate never set when editor opened. Setting to 44.1k" << std::endl;
+
+      /*
+      ** The oscillator displays need a sample rate; some test hosts don't call
+      ** setSampleRate so if we are in this state make the bad but reasonable
+      ** default choice
+      */
+      synth->setSamplerate(44100);
+   }
 #if !TARGET_VST3
    // !!! always call this !!!
    super::open(parent);
@@ -1315,28 +1469,58 @@ bool PLUGIN_API SurgeGUIEditor::open(void* parent, const PlatformType& platformT
 #endif
 
 #if TARGET_VST3
+#if LINUX
+   Steinberg::Linux::IRunLoop* l = nullptr;
+   if (getIPlugFrame()->queryInterface(Steinberg::Linux::IRunLoop::iid, (void**)&l) ==
+       Steinberg::kResultOk)
+   {
+      std::cout << "IPlugFrame is a runloop " << l << std::endl;
+   }
+   else
+   {
+      std::cout << "IPlogFrame is not a runloop " << l << std::endl;
+   }
+   if (l == nullptr)
+   {
+      Surge::UserInteractions::promptError("Starting VST3 with null runloop", "Software Error");
+   }
+   LinuxVST3Init(l);
+#endif
+#endif
+
+   float fzf = getZoomFactor() / 100.0;
+#if TARGET_VST2
+   CRect wsize(0, 0, WINDOW_SIZE_X * fzf, WINDOW_SIZE_Y * fzf);
+#else
+   CRect wsize( 0, 0, WINDOW_SIZE_X, WINDOW_SIZE_Y );
+#endif
+   
+   CFrame *nframe = new CFrame(wsize, this);
+
+   bitmapStore.reset(new SurgeBitmaps());
+   bitmapStore->setupBitmapsForFrame(nframe);
+
+   nframe->setZoom(fzf);
+   CScalableBitmap *cbm = bitmapStore->getBitmap(IDB_BG);
+   cbm->setExtraScaleFactor(getZoomFactor());
+   nframe->setBackground(cbm);
+
+   frame = nframe;
+#if LINUX && TARGET_VST3
+   LinuxVST3FrameOpen(frame, parent, platformType);
+#elif LINUX && TARGET_LV2
+   VSTGUI::X11::FrameConfig frameConfig;
+   frameConfig.runLoop = SurgeLv2::createRunLoop(_userdata);
+   frame->open(parent, platformType, &frameConfig);
+#else
+   frame->open(parent, platformType);
+#endif
+
+#if TARGET_VST3 || TARGET_LV2
+   _idleTimer = new CVSTGUITimer([this](CVSTGUITimer* timer) { idle(); }, 50, false);
    _idleTimer->start();
 #endif
 
-   CRect wsize(0, 0, WINDOW_SIZE_X, WINDOW_SIZE_Y);
-   frame = new CFrame(wsize, this);
-
-   /*
-   ** vstgui contains an error where setting the scale on the
-   ** frame does not set the scale on the frames getBacground
-   ** image. As a result we need to adjust the background in
-   ** vst2 and 3 with the 'additionalZoom' parameter, but also
-   ** we cannot use a shared instance of the background bitmap.
-   ** As such, create our own isntance of the background in these
-   ** cases.
-   */
-   bool myOwnBg = false;
-#if TARGET_VST2
-   myOwnBg = true;
-#endif
-   
-   frame->setBackground(getSurgeBitmap(IDB_BG, myOwnBg));
-   frame->open(parent, platformType);
    /*#if TARGET_AUDIOUNIT
            synth = (sub3_synth*)_effect;
    #elif TARGET_VST3
@@ -1354,7 +1538,10 @@ bool PLUGIN_API SurgeGUIEditor::open(void* parent, const PlatformType& platformT
    openOrRecreateEditor();
 
    if(getZoomFactor() != 100)
+   {
+       zoom_callback(this);
        zoomInvalid = true;
+   }
 
    return true;
 }
@@ -1365,8 +1552,15 @@ void SurgeGUIEditor::close()
    super::close();
 #endif
 
-#if TARGET_VST3
+#if TARGET_VST3 || TARGET_LV2
    _idleTimer->stop();
+   _idleTimer = nullptr;
+#endif
+
+#if TARGET_VST3
+#if LINUX
+   LinuxVST3Detatch();
+#endif
 #endif
 }
 
@@ -1467,7 +1661,7 @@ int32_t SurgeGUIEditor::controlModifierClicked(CControl* control, CButtonState b
          contextMenu->addEntry(txt, eid++);
          contextMenu->addEntry("-", eid++);
          addCallbackMenu(contextMenu, "Copy",
-                         [this]() { synth->storage.clipboard_copy(cp_osc, current_scene, 0); });
+                         [this, a]() { synth->storage.clipboard_copy(cp_osc, current_scene, a); });
          eid++;
 
          addCallbackMenu(contextMenu, "Copy (with modulation)", [this, a]() {
@@ -1540,6 +1734,7 @@ int32_t SurgeGUIEditor::controlModifierClicked(CControl* control, CButtonState b
 
       if (button & kRButton)
       {
+         CModulationSourceButton *cms = (CModulationSourceButton *)control;
          CRect menuRect;
          CPoint where;
          frame->getCurrentMouseLocation(where);
@@ -1552,111 +1747,152 @@ int32_t SurgeGUIEditor::controlModifierClicked(CControl* control, CButtonState b
          int eid = 0;
          int id_clearallmr = -1, id_learnctrl = -1, id_clearctrl = -1, id_bipolar = -1,
              id_copy = -1, id_paste = -1, id_rename = -1;
-         contextMenu->addEntry((char*)modsource_abberations[modsource], eid++);
 
-         int n_md = 0;
+         if( cms->hasAlternate )
+         {
+            int idOn = modsource;
+            int idOff = cms->alternateId;
+            if( cms->useAlternate )
+            {
+               auto t = idOn;
+               idOn = idOff;
+               idOff = t;
+            }
+
+            contextMenu->addEntry((char*)modsource_abberations[idOn], eid++);
+            std::string offLab = "Switch to ";
+            offLab += modsource_abberations[idOff];
+            bool activeMod = (cms->state & 3) == 2;
+            
+            auto *mi = addCallbackMenu(
+               contextMenu, offLab, [this, modsource, cms]() {
+                                       cms->setUseAlternate( ! cms->useAlternate );
+                                       modsource_is_alternate[modsource] = cms->useAlternate;
+                                    }
+               );
+            if( activeMod )
+               mi->setEnabled(false);
+            eid++;
+         }
+         else
+         {
+            contextMenu->addEntry((char*)modsource_abberations[modsource], eid++);
+         }
+         
          int n_total_md = synth->storage.getPatch().param_ptr.size();
 
          const int max_md = 4096;
          assert(max_md >= n_total_md);
 
-         bool first_destination = true;
          bool cancellearn = false;
          int ccid = 0;
 
          // should start at 0, but started at 1 before.. might be a reason but don't remember why...
-         for (int md = 0; md < n_total_md; md++)
+         std::vector<modsources> possibleSources;
+         possibleSources.push_back(modsource);
+         if( cms->hasAlternate )
          {
-            auto activeScene = synth->storage.getPatch().scene_active.val.i;
-            Parameter* parameter = synth->storage.getPatch().param_ptr[md];
-
-            if (((md < n_global_params) || ((parameter->scene - 1) == activeScene)) &&
-                synth->isActiveModulation(md, modsource))
-            {
-               char tmptxt[256];
-               sprintf(tmptxt, "Clear %s -> %s [%.2f]", (char*)modsource_abberations[modsource],
-                       synth->storage.getPatch().param_ptr[md]->get_full_name(),
-                       synth->getModDepth(md, modsource));
-
-               auto clearOp = [this, first_destination, md, n_total_md, modsource, control]() {
-                  bool resetName = false;   // Should I reset the name?
-                  std::string newName = ""; // And to what?
-                  int ccid = modsource - ms_ctrl1;
-
-                  if (first_destination)
-                  {
-                     if (strncmp(synth->storage.getPatch().CustomControllerLabel[ccid],
-                                 synth->storage.getPatch().param_ptr[md]->get_name(), 15) == 0)
-                     {
-                        // So my modulator is named after my short name. I haven't been renamed. So
-                        // I want to reset at least to "-" unless someone is after me
-                        resetName = true;
-                        newName = "-";
-
-                        // Now we have to find if there's another modulation below me
-                        int nextmd = md + 1;
-                        while (nextmd < n_total_md && !synth->isActiveModulation(nextmd, modsource))
-                           nextmd++;
-                        if (nextmd < n_total_md &&
-                            strlen(synth->storage.getPatch().param_ptr[nextmd]->get_name()) > 1)
-                           newName = synth->storage.getPatch().param_ptr[nextmd]->get_name();
-                     }
-                  }
-
-                  synth->clearModulation(md, modsource);
-                  refresh_mod();
-
-                  if (resetName)
-                  {
-                     // And this is where we apply the name refresh, of course.
-                     strncpy(synth->storage.getPatch().CustomControllerLabel[ccid], newName.c_str(),
-                             15);
-                     synth->storage.getPatch().CustomControllerLabel[ccid][15] = 0;
-                     ((CModulationSourceButton*)control)
-                         ->setlabel(synth->storage.getPatch().CustomControllerLabel[ccid]);
-                     control->setDirty();
-                     control->invalid();
-                     synth->updateDisplay();
-                  }
-               };
-
-               if (first_destination)
-               {
-                  contextMenu->addEntry("-", eid++);
-                  first_destination = false;
-               }
-
-               addCallbackMenu(contextMenu, tmptxt, clearOp);
-               eid++;
-
-               n_md++;
-            }
+            possibleSources.push_back((modsources)(cms->alternateId));
          }
 
-         if (n_md)
+         for( auto thisms : possibleSources )
          {
-            addCallbackMenu(
-                contextMenu, "Clear all routings", [this, n_total_md, modsource, control]() {
-                   for (int md = 1; md < n_total_md; md++)
-                      synth->clearModulation(md, modsource);
-                   refresh_mod();
+            bool first_destination = true;
+            int n_md = 0;
+            for (int md = 0; md < n_total_md; md++)
+            {
+               auto activeScene = synth->storage.getPatch().scene_active.val.i;
+               Parameter* parameter = synth->storage.getPatch().param_ptr[md];
+               
+               if (((md < n_global_params) || ((parameter->scene - 1) == activeScene)) &&
+                   synth->isActiveModulation(md, thisms))
+               {
+                  char tmptxt[256];
+                  sprintf(tmptxt, "Clear %s -> %s [%.2f]", (char*)modsource_abberations[thisms],
+                          synth->storage.getPatch().param_ptr[md]->get_full_name(),
+                          synth->getModDepth(md, thisms));
+                  
+                  auto clearOp = [this, first_destination, md, n_total_md, thisms, control]() {
+                                    bool resetName = false;   // Should I reset the name?
+                                    std::string newName = ""; // And to what?
+                                    int ccid = thisms - ms_ctrl1;
+                                    
+                                    if (first_destination)
+                                    {
+                                       if (strncmp(synth->storage.getPatch().CustomControllerLabel[ccid],
+                                                   synth->storage.getPatch().param_ptr[md]->get_name(), 15) == 0)
+                                       {
+                                          // So my modulator is named after my short name. I haven't been renamed. So
+                                          // I want to reset at least to "-" unless someone is after me
+                                          resetName = true;
+                                          newName = "-";
+                                          
+                                          // Now we have to find if there's another modulation below me
+                                          int nextmd = md + 1;
+                                          while (nextmd < n_total_md && !synth->isActiveModulation(nextmd, thisms))
+                                             nextmd++;
+                                          if (nextmd < n_total_md &&
+                                              strlen(synth->storage.getPatch().param_ptr[nextmd]->get_name()) > 1)
+                                             newName = synth->storage.getPatch().param_ptr[nextmd]->get_name();
+                                       }
+                                    }
+                                    
+                                    synth->clearModulation(md, thisms);
+                                    refresh_mod();
+                                    
+                                    if (resetName)
+                                    {
+                                       // And this is where we apply the name refresh, of course.
+                                       strncpy(synth->storage.getPatch().CustomControllerLabel[ccid], newName.c_str(),
+                                               15);
+                                       synth->storage.getPatch().CustomControllerLabel[ccid][15] = 0;
+                                       ((CModulationSourceButton*)control)
+                                          ->setlabel(synth->storage.getPatch().CustomControllerLabel[ccid]);
+                                       control->setDirty();
+                                       control->invalid();
+                                       synth->updateDisplay();
+                                    }
+                                 };
+                  
+                  if (first_destination)
+                  {
+                     contextMenu->addEntry("-", eid++);
+                     first_destination = false;
+                  }
+                  
+                  addCallbackMenu(contextMenu, tmptxt, clearOp);
+                  eid++;
 
-                   // Also blank out the name and rebuild the UI
-                   if (within_range(ms_ctrl1, modsource, ms_ctrl1 + n_customcontrollers - 1))
-                   {
-                      int ccid = modsource - ms_ctrl1;
-
-                      synth->storage.getPatch().CustomControllerLabel[ccid][0] = '-';
-                      synth->storage.getPatch().CustomControllerLabel[ccid][1] = 0;
-                      ((CModulationSourceButton*)control)
-                          ->setlabel(synth->storage.getPatch().CustomControllerLabel[ccid]);
-                      control->setDirty();
-                      control->invalid();
-
-                      synth->updateDisplay();
-                   }
-                });
-            eid++;
+                  n_md++;
+               }
+            }
+            if (n_md)
+            {
+               char clearLab[256];
+               sprintf( clearLab, "Clear all %s routings", modsource_abberations[thisms] );
+               addCallbackMenu(
+                  contextMenu, clearLab, [this, n_total_md, thisms, control]() {
+                                                        for (int md = 1; md < n_total_md; md++)
+                                                           synth->clearModulation(md, thisms);
+                                                        refresh_mod();
+                                                        
+                                                        // Also blank out the name and rebuild the UI
+                                                        if (within_range(ms_ctrl1, thisms, ms_ctrl1 + n_customcontrollers - 1))
+                                                        {
+                                                           int ccid = thisms - ms_ctrl1;
+                                                           
+                                                           synth->storage.getPatch().CustomControllerLabel[ccid][0] = '-';
+                                                           synth->storage.getPatch().CustomControllerLabel[ccid][1] = 0;
+                                                           ((CModulationSourceButton*)control)
+                                                              ->setlabel(synth->storage.getPatch().CustomControllerLabel[ccid]);
+                                                           control->setDirty();
+                                                           control->invalid();
+                                                           
+                                                           synth->updateDisplay();
+                                                        }
+                                                     });
+               eid++;
+            }
          }
          int sc = limit_range(synth->storage.getPatch().scene_active.val.i, 0, 1);
          if (within_range(ms_ctrl1, modsource, ms_ctrl1 + n_customcontrollers - 1))
@@ -1723,14 +1959,14 @@ int32_t SurgeGUIEditor::controlModifierClicked(CControl* control, CButtonState b
             COptionMenu* midiSub =
                 new COptionMenu(menuRect, 0, 0, 0, 0, VSTGUI::COptionMenu::kNoDrawStyle);
             COptionMenu* currentSub;
-            for (int mc = 0; mc < 127; ++mc)
+            for (int mc = 0; mc < 128; ++mc)
             {
-               if (mc % 10 == 0)
+               if (mc % 20 == 0)
                {
                   currentSub =
                       new COptionMenu(menuRect, 0, 0, 0, 0, VSTGUI::COptionMenu::kNoDrawStyle);
                   char name[256];
-                  sprintf(name, "CC %d -> %d", mc, min(mc + 10, 127));
+                  sprintf(name, "CC %d -> %d", mc, min(mc + 20, 128) - 1);
                   midiSub->addEntry(currentSub, name);
                }
 
@@ -1831,6 +2067,12 @@ int32_t SurgeGUIEditor::controlModifierClicked(CControl* control, CButtonState b
             contextMenu->checkEntry(eid, p->absolute);
             eid++;
          }
+         if (p->can_snap())
+         {
+            addCallbackMenu(contextMenu, "Snap", [this, p]() { p->snap = !p->snap; });
+            contextMenu->checkEntry(eid, p->snap);
+            eid++;
+         }
 
          {
             if (synth->learn_param > -1)
@@ -1920,24 +2162,38 @@ int32_t SurgeGUIEditor::controlModifierClicked(CControl* control, CButtonState b
       {
          if (synth->isValidModulation(ptag, modsource) && mod_editor)
          {
-            synth->clearModulation(ptag, modsource);
-            ((CSurgeSlider*)control)->setModValue(synth->getModulation(p->id, modsource));
+            CModulationSourceButton *cms = (CModulationSourceButton *)gui_modsrc[modsource];
+            auto thisms = modsource;
+            if( cms && cms->hasAlternate && cms->useAlternate )
+               thisms = (modsources)cms->alternateId;
+            
+            synth->clearModulation(ptag, thisms);
+            ((CSurgeSlider*)control)->setModValue(synth->getModulation(p->id, thisms));
             ((CSurgeSlider*)control)->setModPresent(synth->isModDestUsed(p->id));
-            ((CSurgeSlider*)control)->setModCurrent(synth->isActiveModulation(p->id, modsource));
+            ((CSurgeSlider*)control)->setModCurrent(synth->isActiveModulation(p->id, thisms));
             // control->setGhostValue(p->get_value_f01());
             oscdisplay->invalid();
             return 1;
          }
          else
          {
-            p->set_value_f01(p->get_default_value_f01());
-            control->setValue(p->get_value_f01());
-            if (oscdisplay && (p->ctrlgroup == cg_OSC))
-               oscdisplay->invalid();
-            if (lfodisplay && (p->ctrlgroup == cg_LFO))
-               lfodisplay->invalid();
-            control->invalid();
-            return 0;
+            /*
+            ** This code resets you to default if you double click or ctrl click
+            ** but on the lfoshape UI this is undesirable; it means if you accidentally
+            ** control click on step sequencer, say, you go back to sin and lose your
+            ** edits. So supress
+            */
+            if (p->ctrltype != ct_lfoshape)
+            {
+               p->set_value_f01(p->get_default_value_f01());
+               control->setValue(p->get_value_f01());
+               if (oscdisplay && (p->ctrlgroup == cg_OSC))
+                  oscdisplay->invalid();
+               if (lfodisplay && (p->ctrlgroup == cg_LFO))
+                  lfodisplay->invalid();
+               control->invalid();
+               return 0;
+            }
          }
       }
       else
@@ -1968,7 +2224,8 @@ void SurgeGUIEditor::valueChanged(CControl* control)
       }
       else
       {
-         int state = ((CModulationSourceButton*)control)->get_state();
+         CModulationSourceButton *cms = (CModulationSourceButton *)control;
+         int state = cms->get_state();
          modsources newsource = (modsources)(tag - tag_mod_source0);
          long buttons = 0; // context->getMouseButtons(); // temp fix vstgui 3.5
          bool ciep =
@@ -2184,6 +2441,13 @@ void SurgeGUIEditor::valueChanged(CControl* control)
           synth->storage.getPatch().author = patchCreator->getText();
           synth->storage.getPatch().category = patchCategory->getText();
           synth->storage.getPatch().comment = patchComment->getText();
+
+          synth->storage.getPatch().patchTuning.tuningStoredInPatch = patchTuning->getValue() > 0.5;
+          if( synth->storage.getPatch().patchTuning.tuningStoredInPatch )
+              synth->storage.getPatch().patchTuning.tuningContents = synth->storage.currentScale.rawText;
+
+          synth->storage.getPatch().dawExtraState.isPopulated = false; // Ignore whatever comes from the DAW
+          
           synth->savePatch();
       }
    }
@@ -2201,13 +2465,20 @@ void SurgeGUIEditor::valueChanged(CControl* control)
          if (modsource && mod_editor && synth->isValidModulation(p->id, modsource) &&
              dynamic_cast<CSurgeSlider*>(control) != nullptr)
          {
-            synth->setModulation(ptag, modsource, ((CSurgeSlider*)control)->getModValue());
+            modsources thisms = modsource;
+            if( gui_modsrc[modsource] )
+            {
+               CModulationSourceButton *cms = (CModulationSourceButton *)gui_modsrc[modsource];
+               if( cms->hasAlternate && cms->useAlternate )
+                  thisms = (modsources) cms->alternateId;
+            }
+            synth->setModulation(ptag, thisms, ((CSurgeSlider*)control)->getModValue());
             ((CSurgeSlider*)control)->setModPresent(synth->isModDestUsed(p->id));
-            ((CSurgeSlider*)control)->setModCurrent(synth->isActiveModulation(p->id, modsource));
+            ((CSurgeSlider*)control)->setModCurrent(synth->isActiveModulation(p->id, thisms));
 
             synth->getParameterName(ptag, txt);
-            sprintf(pname, "%s -> %s", modsource_abberations_short[modsource], txt);
-            sprintf(pdisp, "%f", synth->getModDepth(ptag, modsource));
+            sprintf(pname, "%s -> %s", modsource_abberations_short[thisms], txt);
+            sprintf(pdisp, "%f", synth->getModDepth(ptag, thisms));
             ((CParameterTooltip*)infowindow)->setLabel(pname, pdisp);
             modulate = true;
 
@@ -2454,6 +2725,21 @@ bool SurgeGUIEditor::showPatchStoreDialog(patchdata* p,
                                           std::vector<PatchCategory>* patch_category,
                                           int startcategory)
 {
+   if( synth->storage.isStandardTuning )
+   {
+       patchTuningLabel->setFontColor(kGreyCColor);
+       patchTuning->setMouseEnabled(false);
+       patchTuning->setBoxFrameColor(kGreyCColor);
+       patchTuning->setValue(0);
+   }
+   else
+   {
+       patchTuningLabel->setFontColor(kBlackCColor);
+       patchTuning->setMouseEnabled(true);
+       patchTuning->setBoxFrameColor(kBlackCColor);
+       patchTuning->setValue(0);
+   }
+    
    saveDialog->setVisible(true);
    // frame->setModalView(saveDialog);
 
@@ -2465,8 +2751,104 @@ long SurgeGUIEditor::applyParameterOffset(long id)
     return id-start_paramtags;
 }
 
+long SurgeGUIEditor::unapplyParameterOffset(long id)
+{
+   return id + start_paramtags;
+}
+
+// Status Panel Callbacks
+void SurgeGUIEditor::toggleMPE()
+{
+    this->synth->mpeEnabled = ! this->synth->mpeEnabled;
+    if( statuspanel )
+        ((CStatusPanel *)statuspanel)->setDisplayFeature(CStatusPanel::mpeMode, this->synth->mpeEnabled );
+}
+void SurgeGUIEditor::showMPEMenu(VSTGUI::CPoint &where)
+{
+    CRect menuRect;
+    menuRect.offset(where.x, where.y);
+    auto m = makeMpeMenu(menuRect);
+    
+    frame->addView(m);
+    m->setDirty();
+    m->popup();
+    frame->removeView(m, true);
+}
+
+void SurgeGUIEditor::toggleTuning()
+{
+    if( this->synth->storage.isStandardTuning && tuningCacheForToggle.size() > 0 )
+    {
+        this->synth->storage.retuneToScale(Surge::Storage::parseSCLData(tuningCacheForToggle));
+    }
+    else if( ! this->synth->storage.isStandardTuning )
+    {
+        tuningCacheForToggle = this->synth->storage.currentScale.rawText;
+        this->synth->storage.init_tables();
+    }
+
+    if( statuspanel )
+        ((CStatusPanel *)statuspanel)->setDisplayFeature(CStatusPanel::tuningMode, !this->synth->storage.isStandardTuning );
+}
+void SurgeGUIEditor::showTuningMenu(VSTGUI::CPoint &where)
+{
+    CRect menuRect;
+    menuRect.offset(where.x, where.y);
+    auto m = makeTuningMenu(menuRect);
+    
+    frame->addView(m);
+    m->setDirty();
+    m->popup();
+    frame->removeView(m, true);
+}
+
+void SurgeGUIEditor::tuningFileDropped(std::string fn)
+{
+    this->synth->storage.retuneToScale(Surge::Storage::readSCLFile(fn));
+}
+
+bool SurgeGUIEditor::doesZoomFitToScreen(int zf, int &correctedZf)
+{
+   CRect screenDim = Surge::GUI::getScreenDimensions(getFrame());
+
+   float baseW = WINDOW_SIZE_X;
+   float baseH = WINDOW_SIZE_Y;
+
+   /*
+   ** Window decoration takes up some of the screen so don't zoom to full screen dimensions.
+   ** This heuristic seems to work on windows 10 and macos 10.14 weel enough.
+   ** Keep these as integers to be consistent wiht the other zoom factors, and to make
+   ** the error message cleaner.
+   */
+   int maxScreenUsage = 90;
+
+   /*
+   ** In the startup path we may not have a clean window yet to give us a trustworthy
+   ** screen dimension; so allow callers to supress this check with an optional
+   ** variable and set it only in the constructor of SurgeGUIEditor
+   */
+   if (zf != 100.0 && zf > 100 &&
+       screenDim.getHeight() > 0 && screenDim.getWidth() > 0 && (
+           (baseW * zf / 100.0) > maxScreenUsage * screenDim.getWidth() / 100.0 ||
+           (baseH * zf / 100.0) > maxScreenUsage * screenDim.getHeight() / 100.0
+           )
+       )
+   {
+      correctedZf = findLargestFittingZoomBetween(100.0 , zf, 5, maxScreenUsage, baseW, baseH);
+      return false;
+   }
+   else
+   {
+      correctedZf = zf;
+      return true;
+   }
+}
+
 void SurgeGUIEditor::setZoomFactor(int zf)
 {
+   if (!zoomEnabled)
+      zf = 100.0;
+
    if (zf < minimumZoom)
    {
       std::ostringstream oss;
@@ -2489,63 +2871,31 @@ void SurgeGUIEditor::setZoomFactor(int zf)
       zoomInvalid = true;
    }
    
-#if TARGET_VST3
-   /*
-   ** VST3 doesn't have this API available to it, so just assume for now
-   */
-   float baseW = WINDOW_SIZE_X;
-   float baseH = WINDOW_SIZE_Y;
-#else
-   ERect *baseUISize;
-   getRect (&baseUISize);
-
-   float baseW = (baseUISize->right - baseUISize->left);
-   float baseH = (baseUISize->top - baseUISize->bottom);
-#endif
-
-   /*
-   ** Window decoration takes up some of the screen so don't zoom to full screen dimensions.
-   ** This heuristic seems to work on windows 10 and macos 10.14 weel enough.
-   ** Keep these as integers to be consistent wiht the other zoom factors, and to make
-   ** the error message cleaner.
-   */
-   int maxScreenUsage = 90;
-
-   /*
-   ** In the startup path we may not have a clean window yet to give us a trustworthy
-   ** screen dimension; so allow callers to supress this check with an optional
-   ** variable and set it only in the constructor of SurgeGUIEditor
-   */
-   if (zf != 100.0 && zf > 100 &&
-       screenDim.getHeight() > 0 && screenDim.getWidth() > 0 && (
-           (baseW * zf / 100.0) > maxScreenUsage * screenDim.getWidth() / 100.0 ||
-           (baseH * zf / 100.0) > maxScreenUsage * screenDim.getHeight() / 100.0
-           )
-       )
+   int newZf;
+   if( doesZoomFitToScreen(zf, newZf) )
    {
-       int newZF = findLargestFittingZoomBetween(100.0 , zf, 5, maxScreenUsage, baseW, baseH);
-       zoomFactor = newZF;
-       
-       std::ostringstream msg;
-       msg << "Surge limits zoom levels so as not to grow Surge larger than your available screen. "
-           << "Your screen size is " << screenDim.getWidth() << "x" << screenDim.getHeight() << " "
-           << "and your target zoom of " << zf << "% would be too large."
-           << std::endl << std::endl
-           << "Surge is choosing the largest fitting zoom " << zoomFactor << "%.";
-       Surge::UserInteractions::promptError(msg.str(),
-                                            "Limiting Zoom by Screen Size");
+      zoomFactor = zf;
    }
    else
    {
-       zoomFactor = zf;
+      zoomFactor = newZf;
+      
+      std::ostringstream msg;
+      msg << "Surge limits zoom levels so as not to grow Surge larger than your available screen. "
+          << "Your screen size is " << screenDim.getWidth() << "x" << screenDim.getHeight() << " "
+          << "and your target zoom of " << zf << "% would be too large."
+          << std::endl << std::endl
+          << "Surge is choosing the largest fitting zoom " << zoomFactor << "%.";
+      Surge::UserInteractions::promptError(msg.str(),
+                                           "Limiting Zoom by Screen Size");
    }
-   
+
    zoom_callback(this);
 
    float dbs = Surge::GUI::getDisplayBackingScaleFactor(getFrame());
    int fullPhysicalZoomFactor = (int)(zf * dbs);
-   CScalableBitmap::setPhysicalZoomFactor(fullPhysicalZoomFactor);
-
+   if (bitmapStore != nullptr)
+      bitmapStore->setPhysicalZoomFactor(fullPhysicalZoomFactor);
 }
 
 void SurgeGUIEditor::showSettingsMenu(CRect &menuRect)
@@ -2555,68 +2905,241 @@ void SurgeGUIEditor::showSettingsMenu(CRect &menuRect)
     int eid = 0;
 
     // Zoom submenus
-    COptionMenu *zoomSubMenu = new COptionMenu(menuRect, 0, 0, 0, 0, VSTGUI::COptionMenu::kNoDrawStyle);
-
-    int zid = 0;
-    for(auto s : { 100, 125, 150, 200, 300 }) // These are somewhat arbitrary reasonable defaults
+    if (zoomEnabled)
     {
-        std::ostringstream lab;
-        lab << "Zoom to " << s << "%";
-        CCommandMenuItem *zcmd = new CCommandMenuItem(CCommandMenuItem::Desc(lab.str()));
-        zcmd->setActions([this, s](CCommandMenuItem* m) { setZoomFactor(s); });
-        zoomSubMenu->addEntry(zcmd); zid++;
+       COptionMenu* zoomSubMenu =
+           new COptionMenu(menuRect, 0, 0, 0, 0, VSTGUI::COptionMenu::kNoDrawStyle);
+
+       int zid = 0;
+       for (auto s : {100, 125, 150, 200, 300}) // These are somewhat arbitrary reasonable defaults
+       {
+          std::ostringstream lab;
+          lab << "Zoom to " << s << "%";
+          CCommandMenuItem* zcmd = new CCommandMenuItem(CCommandMenuItem::Desc(lab.str()));
+          zcmd->setActions([this, s](CCommandMenuItem* m) { setZoomFactor(s); });
+          zoomSubMenu->addEntry(zcmd);
+          zid++;
+       }
+
+       zoomSubMenu->addEntry("-", zid++);
+
+       for (auto jog : {-25, -10, 10, 25}) // These are somewhat arbitrary reasonable defaults also
+       {
+          std::ostringstream lab;
+          if (jog > 0)
+             lab << "Grow by " << jog << "%";
+          else
+             lab << "Shrink by " << -jog << "%";
+
+          CCommandMenuItem* zcmd = new CCommandMenuItem(CCommandMenuItem::Desc(lab.str()));
+          zcmd->setActions(
+              [this, jog](CCommandMenuItem* m) { setZoomFactor(getZoomFactor() + jog); });
+          zoomSubMenu->addEntry(zcmd);
+          zid++;
+       }
+
+       zoomSubMenu->addEntry("-", zid++);
+       CCommandMenuItem* biggestZ = new CCommandMenuItem(CCommandMenuItem::Desc("Zoom to Largest"));
+       biggestZ->setActions([this](CCommandMenuItem* m) {
+          int newZF = findLargestFittingZoomBetween(100.0, 500.0, 5,
+                                                    90, // See comment in setZoomFactor
+                                                    WINDOW_SIZE_X, WINDOW_SIZE_Y);
+          setZoomFactor(newZF);
+       });
+       zoomSubMenu->addEntry(biggestZ);
+       zid++;
+
+       CCommandMenuItem* smallestZ =
+           new CCommandMenuItem(CCommandMenuItem::Desc("Zoom to Smallest"));
+       smallestZ->setActions([this](CCommandMenuItem* m) { setZoomFactor(minimumZoom); });
+       zoomSubMenu->addEntry(smallestZ);
+       zid++;
+
+       zoomSubMenu->addEntry("-", zid++);
+       std::ostringstream zss;
+       zss << "Set " << zoomFactor << "% as default";
+       CCommandMenuItem* defaultZ = new CCommandMenuItem(CCommandMenuItem::Desc(zss.str().c_str()));
+       defaultZ->setActions([this](CCommandMenuItem* m) {
+          Surge::Storage::updateUserDefaultValue(&(this->synth->storage), "defaultZoom",
+                                                 this->zoomFactor);
+       });
+       zoomSubMenu->addEntry(defaultZ);
+       zid++;
+
+       addCallbackMenu(zoomSubMenu, "Set default zoom to ...", [this]() {
+               // FIXME! This won't work on linux
+               char c[256];
+               snprintf(c, 256, "%d", this->zoomFactor );
+               spawn_miniedit_text(c, 16);
+               int newVal = ::atoi(c);
+               Surge::Storage::updateUserDefaultValue(&(this->synth->storage), "defaultZoom", newVal);
+           });
+       zid++;
+
+       settingsMenu->addEntry(zoomSubMenu, "Zoom" );
+       eid++;
     }
 
-    zoomSubMenu->addEntry( "-", zid++ );
+    auto mpeSubMenu = makeMpeMenu(menuRect);
+    std::string mpeMenuName = "MPE (disabled)";
+    if (synth->mpeEnabled)
+       mpeMenuName = "MPE (enabled)";
+    settingsMenu->addEntry(mpeSubMenu, mpeMenuName.c_str());
+    eid++;
+    mpeSubMenu->forget();
+
+    COptionMenu *uiOptionsMenu = new COptionMenu(menuRect, 0, 0, 0, 0, VSTGUI::COptionMenu::kNoDrawStyle |
+                                                 VSTGUI::COptionMenu::kMultipleCheckStyle );
     
-    for(auto jog : { -25, -10, 10, 25 } ) // These are somewhat arbitrary reasonable defaults also
-    {
-        std::ostringstream lab;
-        if( jog > 0 )
-            lab << "Grow by " << jog << "%";
-        else
-            lab << "Shrink by " << -jog << "%";
-        
-        CCommandMenuItem *zcmd = new CCommandMenuItem(CCommandMenuItem::Desc(lab.str()));
-        zcmd->setActions(
-            [this, jog](CCommandMenuItem* m) { setZoomFactor(getZoomFactor() + jog); });
-        zoomSubMenu->addEntry(zcmd); zid++;
-    }
+    // Mouse behavior
+    // Mouse behavior
+    int mid = 0;
 
-    zoomSubMenu->addEntry("-", zid++);
-    CCommandMenuItem *biggestZ = new CCommandMenuItem(CCommandMenuItem::Desc("Zoom to Largest"));
-    biggestZ->setActions([this](CCommandMenuItem* m) {
-       int newZF = findLargestFittingZoomBetween(100.0, 500.0, 5,
-                                                 90, // See comment in setZoomFactor
-                                                 WINDOW_SIZE_X, WINDOW_SIZE_Y);
-       setZoomFactor(newZF);
+    COptionMenu* mouseSubMenu = new COptionMenu(menuRect, 0, 0, 0, 0,
+                                                VSTGUI::COptionMenu::kNoDrawStyle |
+                                                    VSTGUI::COptionMenu::kMultipleCheckStyle);
+
+    std::string mouseClassic = "Classic";
+    std::string mouseSlow = "Slow";
+    std::string mouseMedium = "Medium";
+    std::string mouseExact = "Exact";
+
+    VSTGUI::CCommandMenuItem* menuItem = nullptr;
+
+    menuItem = addCallbackMenu(mouseSubMenu, mouseClassic.c_str(), [this]() {
+       CSurgeSlider::sliderMoveRateState = CSurgeSlider::kClassic;
+       Surge::Storage::updateUserDefaultValue(&(this->synth->storage), "sliderMoveRateState",
+                                              CSurgeSlider::sliderMoveRateState);
     });
-    zoomSubMenu->addEntry(biggestZ); zid++;
+    if (menuItem)
+       menuItem->setChecked((CSurgeSlider::sliderMoveRateState == CSurgeSlider::kClassic));
+    mid++;
 
-    CCommandMenuItem *smallestZ = new CCommandMenuItem(CCommandMenuItem::Desc("Zoom to Smallest"));
-    smallestZ->setActions([this](CCommandMenuItem* m) {
-       setZoomFactor(minimumZoom);
+    menuItem = addCallbackMenu(mouseSubMenu, mouseSlow.c_str(), [this]() {
+       CSurgeSlider::sliderMoveRateState = CSurgeSlider::kSlow;
+       Surge::Storage::updateUserDefaultValue(&(this->synth->storage), "sliderMoveRateState",
+                                              CSurgeSlider::sliderMoveRateState);
     });
-    zoomSubMenu->addEntry(smallestZ); zid++;
+    if (menuItem)
+       menuItem->setChecked((CSurgeSlider::sliderMoveRateState == CSurgeSlider::kSlow));
+    mid++;
 
-    zoomSubMenu->addEntry("-", zid++);
-    std::ostringstream zss;
-    zss << "Set " << zoomFactor << "% as default";
-    CCommandMenuItem *defaultZ = new CCommandMenuItem(CCommandMenuItem::Desc(zss.str().c_str()));
-    defaultZ->setActions([this](CCommandMenuItem* m) {
-       Surge::Storage::updateUserDefaultValue(&(this->synth->storage), "defaultZoom",
-                                              this->zoomFactor);
+    menuItem = addCallbackMenu(mouseSubMenu, mouseMedium.c_str(), [this]() {
+       CSurgeSlider::sliderMoveRateState = CSurgeSlider::kMedium;
+       Surge::Storage::updateUserDefaultValue(&(this->synth->storage), "sliderMoveRateState",
+                                              CSurgeSlider::sliderMoveRateState);
     });
-    zoomSubMenu->addEntry(defaultZ); zid++;
+    if (menuItem)
+       menuItem->setChecked((CSurgeSlider::sliderMoveRateState == CSurgeSlider::kMedium));
+    mid++;
 
-    settingsMenu->addEntry(zoomSubMenu, "Zoom"); eid++;
+    menuItem = addCallbackMenu(mouseSubMenu, mouseExact.c_str(), [this]() {
+       CSurgeSlider::sliderMoveRateState = CSurgeSlider::kExact;
+       Surge::Storage::updateUserDefaultValue(&(this->synth->storage), "sliderMoveRateState",
+                                              CSurgeSlider::sliderMoveRateState);
+    });
+    if (menuItem)
+       menuItem->setChecked((CSurgeSlider::sliderMoveRateState == CSurgeSlider::kExact));
+    mid++;
+
+    std::string mouseMenuName = "Mouse Behavior";
+
+    uiOptionsMenu->addEntry(mouseSubMenu, mouseMenuName.c_str() );
+    mouseSubMenu->forget();
+
+#if !LINUX
+    auto useBitmap = Surge::Storage::getUserDefaultValue(&(this->synth->storage), "useBitmapLFO",
+                                                         0
+        );
+    auto bitmapMenu = useBitmap ? "Use Vector LFO Display" : "Use Bitmap LFO Display";
+    addCallbackMenu( uiOptionsMenu, bitmapMenu, [this, useBitmap]() {
+            Surge::Storage::updateUserDefaultValue(&(this->synth->storage),
+                                                   "useBitmapLFO",
+                                                   useBitmap ? 0 : 1 );
+            this->synth->refresh_editor = true;
+        });
+#endif
+    
+    settingsMenu->addEntry(uiOptionsMenu, "UI Options" );
+    uiOptionsMenu->forget();
+    eid++;
+
+    auto tuningSubMenu = makeTuningMenu(menuRect);
+    settingsMenu->addEntry(tuningSubMenu, "Tuning" );
+    eid++;
+    tuningSubMenu->forget();
+
+    int did=0;
+    COptionMenu *dataSubMenu = new COptionMenu(menuRect, 0, 0, 0, 0,
+                                               VSTGUI::COptionMenu::kNoDrawStyle |
+                                               VSTGUI::COptionMenu::kMultipleCheckStyle);
+
+
+    addCallbackMenu(dataSubMenu, "Open User Data Folder", [this]() {
+       Surge::UserInteractions::openFolderInFileBrowser(this->synth->storage.userDataPath);
+    });
+    did++;
+    
+    addCallbackMenu(dataSubMenu, "Open Factory Data Folder", [this]() {
+       Surge::UserInteractions::openFolderInFileBrowser(this->synth->storage.datapath);
+    });
+    did++;
+
+    addCallbackMenu(dataSubMenu, "Rescan All Data Folders", [this]() {
+       this->synth->storage.refresh_wtlist();
+       this->synth->storage.refresh_patchlist();
+    });
+    did++;
+
+    addCallbackMenu( dataSubMenu, "Set Custom User Data Folder", [this]() {
+            auto cb = [this](std::string f) {
+                // FIXME - check if f is a path
+                this->synth->storage.userDataPath = f;
+                Surge::Storage::updateUserDefaultValue(&(this->synth->storage),
+                                                       "userDataPath",
+                                                       f);
+                this->synth->storage.refresh_wtlist();
+                this->synth->storage.refresh_patchlist();
+            };
+            Surge::UserInteractions::promptFileOpenDialog(this->synth->storage.userDataPath, "", cb, true, true);
+                                                          
+        });
+    did++;
+    
+    settingsMenu->addEntry( dataSubMenu, "Data and Patches");
+    eid++;
+    dataSubMenu->forget();
 
     settingsMenu->addSeparator(eid++);
 
-    addCallbackMenu(settingsMenu, "SurgeManual", []() {
+
+    addCallbackMenu(settingsMenu, "Reach the Developers", []() {
+            Surge::UserInteractions::openURL("https://surge-synthesizer.github.io/feedback");
+        });
+    eid++;
+    
+    addCallbackMenu(settingsMenu, "Read the Code", []() {
+            Surge::UserInteractions::openURL("https://github.com/surge-synthesizer/surge/");
+        });
+    eid++;
+
+    addCallbackMenu(settingsMenu, "Download Additional Content", []() {
+            Surge::UserInteractions::openURL("https://github.com/surge-synthesizer/surge-synthesizer.github.io/wiki/Additional-Content");
+    });
+    eid++;
+
+    addCallbackMenu(settingsMenu, "Surge Website", []() {
+            Surge::UserInteractions::openURL("https://surge-synthesizer.github.io/");
+        });
+    eid++;
+    
+    addCallbackMenu(settingsMenu, "Surge Manual", []() {
        Surge::UserInteractions::openURL("https://surge-synthesizer.github.io/manual/");
     });
     eid++;
+
+    settingsMenu->addSeparator(eid++);
+
     addCallbackMenu(settingsMenu, "About", [this]() {
        if (aboutbox)
           ((CAboutBox*)aboutbox)->boxShow();
@@ -2627,6 +3150,102 @@ void SurgeGUIEditor::showSettingsMenu(CRect &menuRect)
     settingsMenu->setDirty();
     settingsMenu->popup();
     frame->removeView(settingsMenu, true);
+}
+
+
+VSTGUI::COptionMenu *SurgeGUIEditor::makeMpeMenu(VSTGUI::CRect &menuRect)
+{
+    COptionMenu* mpeSubMenu =
+        new COptionMenu(menuRect, 0, 0, 0, 0, VSTGUI::COptionMenu::kNoDrawStyle);
+    std::string endis = "Enable MPE";
+    if (synth->mpeEnabled)
+       endis = "Disable MPE";
+    addCallbackMenu(mpeSubMenu, endis.c_str(),
+                    [this]() { this->synth->mpeEnabled = !this->synth->mpeEnabled; });
+
+    std::ostringstream oss;
+    oss << "Change default pitch bend range (" << synth->mpePitchBendRange << ")";
+    addCallbackMenu(mpeSubMenu, oss.str().c_str(), [this]() {
+       // FIXME! This won't work on linux
+       char c[256];
+       snprintf(c, 256, "%d", synth->mpePitchBendRange);
+       spawn_miniedit_text(c, 16);
+       int newVal = ::atoi(c);
+       Surge::Storage::updateUserDefaultValue(&(this->synth->storage), "mpePitchBendRange", newVal);
+       this->synth->mpePitchBendRange = newVal;
+    });
+    return mpeSubMenu;
+
+}
+
+VSTGUI::COptionMenu *SurgeGUIEditor::makeTuningMenu(VSTGUI::CRect &menuRect)
+{
+    int tid=0;
+    COptionMenu *tuningSubMenu = new COptionMenu(menuRect, 0, 0, 0, 0,
+                                                 VSTGUI::COptionMenu::kNoDrawStyle |
+                                                 VSTGUI::COptionMenu::kMultipleCheckStyle);
+
+    auto *st = addCallbackMenu(tuningSubMenu, "Set to Standard Tuning",
+                    [this]()
+                    {
+                        this->synth->storage.init_tables();
+                    }
+        );
+    st->setEnabled(! this->synth->storage.isStandardTuning);
+    tid++;
+
+    addCallbackMenu(tuningSubMenu, "Apply .scl file tuning",
+                    [this]()
+                    {
+                        auto cb = [this](std::string sf)
+                        {
+                            std::string sfx = ".scl";
+                            if( sf.length() >= sfx.length())
+                            {
+                                if( sf.compare(sf.length() - sfx.length(), sfx.length(), sfx) != 0 )
+                                {
+                                    Surge::UserInteractions::promptError( "Please only select .scl files", "Invalid Choice" );
+                                    std::cout << "FILE is [" << sf << "]" << std::endl;
+                                    return;
+                                }
+                            }
+                            auto sc = Surge::Storage::readSCLFile(sf);
+
+                            if (!this->synth->storage.retuneToScale(sc))
+                            {
+                               Surge::UserInteractions::promptError( "This .scl file is not valid", "File format error" );
+                               return;
+                            }
+                        };
+                        Surge::UserInteractions::promptFileOpenDialog(this->synth->storage.userDataPath,
+                                                                      ".scl",
+                                                                      cb);
+                    }
+        );
+    tid++;
+
+    auto *sct = addCallbackMenu(tuningSubMenu, "Show current tuning",
+                    [this]()
+                    {
+                        // Surge::UserInteractions::promptOKCancel( "Surge tuning is NONstandard tuning", "Tuning Info" );
+                        Surge::UserInteractions::showHTML( this->synth->storage.currentScale.toHtml() );
+                    }
+        );
+    sct->setEnabled(! this->synth->storage.isStandardTuning );
+
+    /*
+    tuningSubMenu->addSeparator(tid++);
+    
+    addCallbackMenu(tuningSubMenu, "Apply .kbm file mapping",
+                    [this]()
+                    {
+                        Surge::UserInteractions::promptError("KBM File Mappings are not yet supported in Surge",
+                                                             "Unsupported",
+                                                             this);
+                    }
+        );
+    */
+    return tuningSubMenu;
 }
 
 int SurgeGUIEditor::findLargestFittingZoomBetween(int zoomLow, // bottom of range
@@ -2656,13 +3275,59 @@ int SurgeGUIEditor::findLargestFittingZoomBetween(int zoomLow, // bottom of rang
     return result;
 }
 
-void SurgeGUIEditor::addCallbackMenu(VSTGUI::COptionMenu* toThis,
-                                     std::string label,
-                                     std::function<void()> op)
+VSTGUI::CCommandMenuItem* SurgeGUIEditor::addCallbackMenu(VSTGUI::COptionMenu* toThis,
+                                                          std::string label,
+                                                          std::function<void()> op)
 {
    CCommandMenuItem* menu = new CCommandMenuItem(CCommandMenuItem::Desc(label.c_str()));
    menu->setActions([op](CCommandMenuItem* m) { op(); });
    toThis->addEntry(menu);
+   return menu;
 }
+
+#if TARGET_VST3
+Steinberg::tresult PLUGIN_API SurgeGUIEditor::onSize(Steinberg::ViewRect* newSize)
+{
+   float izfx = newSize->getWidth() * 1.0 / WINDOW_SIZE_X * 100.0;
+   float izfy = newSize->getHeight() * 1.0 / WINDOW_SIZE_Y * 100.0;
+   float izf = std::min(izfx, izfy);
+   izf = std::max(izf, 1.0f*minimumZoom);
+
+   int fzf = (int)izf;
+   // Don't allow me to set a zoom which will pop a dialog from this drag event. See #1212
+   if( ! doesZoomFitToScreen((int)izf, fzf) )
+   {
+      izf = fzf;
+   }
+
+   /*
+   ** If the implied zoom factor changes my size by more than a pixel, resize 
+   */
+   auto zfdx = std::fabs( (izf - zoomFactor) * WINDOW_SIZE_X ) / 100.0;
+   auto zfdy = std::fabs( (izf - zoomFactor) * WINDOW_SIZE_Y ) / 100.0;
+   auto zfd = std::max( zfdx, zfdy );
+
+   if( zfd > 1 )
+   {
+      setZoomFactor( izf );
+   }
+
+   return Steinberg::Vst::VSTGUIEditor::onSize(newSize);
+}
+Steinberg::tresult PLUGIN_API SurgeGUIEditor::checkSizeConstraint(Steinberg::ViewRect* newSize)
+{
+   // float tratio = 1.0 * WINDOW_SIZE_X / WINDOW_SIZE_Y;
+   // float cratio = 1.0 * newSize->getWidth() / newSize->getHeight();
+
+   // we want cratio == tration by adjusting height so
+   // WSX / WSY = gW / gH
+   // gH = gW * WSY / WSX
+
+   float newHeight = 1.0 * newSize->getWidth() * WINDOW_SIZE_Y / WINDOW_SIZE_X;
+   newSize->bottom = newSize->top + std::ceil(newHeight);
+   return Steinberg::kResultTrue;
+}
+
+#endif
 
 //------------------------------------------------------------------------------------------------

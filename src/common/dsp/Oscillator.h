@@ -30,9 +30,15 @@ public:
    }
    inline float pitch_to_omega(float x)
    {
-      return (float)(M_PI * (16.35159783) * note_to_pitch(x) * dsamplerate_os_inv);
+      // Wondering about that constant 16.35? It is the frequency of C0
+      return (float)(M_PI * (16.35159783) * storage->note_to_pitch(x) * dsamplerate_os_inv);
    }
 
+   virtual void handleStreamingMismatches(int streamingRevision, int currentSynthStreamingRevision)
+   {
+       // No-op here.
+   }
+   
 protected:
    SurgeStorage* storage;
    OscillatorStorage* oscdata;
@@ -46,26 +52,38 @@ class osc_sine : public Oscillator
 {
 public:
    osc_sine(SurgeStorage* storage, OscillatorStorage* oscdata, pdata* localcopy);
-   virtual void init(float pitch, bool is_display = false);
+   virtual void init(float pitch, bool is_display = false) override;
    virtual void process_block(
+       float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f) override;
+   virtual void process_block_legacy(
        float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f);
    virtual ~osc_sine();
+   virtual void init_ctrltypes() override;
+   virtual void init_default_values() override;
+
    quadr_osc sinus;
    double phase;
    float driftlfo, driftlfo2;
    lag<double> FMdepth;
+   lag<double> FB;
+
+   int id_mode, id_fb, id_fmlegacy;
+   float lastvalue = 0;
+
+   float valueFromSinAndCos(float svalue, float cvalue);
+   virtual void handleStreamingMismatches(int s, int synths) override;
 };
 
 class FMOscillator : public Oscillator
 {
 public:
    FMOscillator(SurgeStorage* storage, OscillatorStorage* oscdata, pdata* localcopy);
-   virtual void init(float pitch, bool is_display = false);
+   virtual void init(float pitch, bool is_display = false) override;
    virtual void process_block(
-       float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f);
+       float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f) override;
    virtual ~FMOscillator();
-   virtual void init_ctrltypes();
-   virtual void init_default_values();
+   virtual void init_ctrltypes() override;
+   virtual void init_default_values() override;
    double phase, lastoutput;
    quadr_osc RM1, RM2, AM;
    float driftlfo, driftlfo2;
@@ -76,12 +94,12 @@ class FM2Oscillator : public Oscillator
 {
 public:
    FM2Oscillator(SurgeStorage* storage, OscillatorStorage* oscdata, pdata* localcopy);
-   virtual void init(float pitch, bool is_display = false);
+   virtual void init(float pitch, bool is_display = false) override;
    virtual void process_block(
-       float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f);
+       float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f) override;
    virtual ~FM2Oscillator();
-   virtual void init_ctrltypes();
-   virtual void init_default_values();
+   virtual void init_ctrltypes() override;
+   virtual void init_default_values() override;
    double phase, lastoutput;
    quadr_osc RM1, RM2;
    float driftlfo, driftlfo2;
@@ -92,13 +110,13 @@ class osc_audioinput : public Oscillator
 {
 public:
    osc_audioinput(SurgeStorage* storage, OscillatorStorage* oscdata, pdata* localcopy);
-   virtual void init(float pitch, bool is_display = false);
+   virtual void init(float pitch, bool is_display = false) override;
    virtual void process_block(
-       float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f);
+       float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f) override;
    virtual ~osc_audioinput();
-   virtual void init_ctrltypes();
-   virtual void init_default_values();
-   virtual bool allow_display()
+   virtual void init_ctrltypes() override;
+   virtual void init_default_values() override;
+   virtual bool allow_display() override
    {
       return false;
    }
@@ -134,11 +152,11 @@ private:
 
 public:
    SurgeSuperOscillator(SurgeStorage* storage, OscillatorStorage* oscdata, pdata* localcopy);
-   virtual void init(float pitch, bool is_display = false);
-   virtual void init_ctrltypes();
-   virtual void init_default_values();
+   virtual void init(float pitch, bool is_display = false) override;
+   virtual void init_ctrltypes() override;
+   virtual void init_default_values() override;
    virtual void process_block(
-       float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f);
+       float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f) override;
    template <bool FM> void convolute(int voice, bool stereo);
    virtual ~SurgeSuperOscillator();
 
@@ -155,16 +173,18 @@ private:
    float CoefB0, CoefB1, CoefA1;
 };
 
+#if 0
 class osc_pluck : public Oscillator
 {
 public:
    osc_pluck(SurgeStorage* storage, OscillatorStorage* oscdata, pdata* localcopy);
-   virtual void init(float pitch, bool is_display = false);
-   virtual void process_block(float pitch, float drift);
-   virtual void process_block_fm(float pitch, float depth, float drift);
+   virtual void init(float pitch, bool is_display = false) override;
+   virtual void process_block(float pitch, float drift) override;
+   virtual void process_block_fm(float pitch, float depth, float drift) override;
    void process_blockT(float pitch, bool FM, float depth, float drift = 0);
    virtual ~osc_pluck();
 };
+#endif
 
 class SampleAndHoldOscillator : public AbstractBlitOscillator
 {
@@ -173,11 +193,11 @@ private:
 
 public:
    SampleAndHoldOscillator(SurgeStorage* storage, OscillatorStorage* oscdata, pdata* localcopy);
-   virtual void init(float pitch, bool is_display = false);
-   virtual void init_ctrltypes();
-   virtual void init_default_values();
+   virtual void init(float pitch, bool is_display = false) override;
+   virtual void init_ctrltypes() override;
+   virtual void init_default_values() override;
    virtual void process_block(
-       float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f);
+       float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f) override;
    virtual ~SampleAndHoldOscillator();
 
 private:
@@ -199,11 +219,11 @@ class WavetableOscillator : public AbstractBlitOscillator
 public:
    lipol_ps li_hpf, li_DC, li_integratormult;
    WavetableOscillator(SurgeStorage* storage, OscillatorStorage* oscdata, pdata* localcopy);
-   virtual void init(float pitch, bool is_display = false);
-   virtual void init_ctrltypes();
-   virtual void init_default_values();
+   virtual void init(float pitch, bool is_display = false) override;
+   virtual void init_ctrltypes() override;
+   virtual void init_default_values() override;
    virtual void process_block(
-       float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f);
+       float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f) override; 
    virtual ~WavetableOscillator();
 
 private:
@@ -249,11 +269,11 @@ private:
 
 public:
    WindowOscillator(SurgeStorage* storage, OscillatorStorage* oscdata, pdata* localcopy);
-   virtual void init(float pitch, bool is_display = false);
-   virtual void init_ctrltypes();
-   virtual void init_default_values();
+   virtual void init(float pitch, bool is_display = false) override;
+   virtual void init_ctrltypes() override;
+   virtual void init_default_values() override;
    virtual void process_block(
-       float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f);
+       float pitch, float drift = 0.f, bool stereo = false, bool FM = false, float FMdepth = 0.f) override;
    virtual ~WindowOscillator();
 
 private:

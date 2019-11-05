@@ -305,10 +305,8 @@ bool Vst2PluginInstance::getProgramNameIndexed (VstInt32 category, VstInt32 inde
    if (tryInit())
    {
        SurgeSynthesizer* s = (SurgeSynthesizer*)_instance;
-       /*
-       ** The original surge had this 63. Presume it is documented somewhere in vst land.
-       */
-       strncpy(text, s->storage.getPatch().name.c_str(), 63);
+       strncpy(text, s->storage.getPatch().name.c_str(), kVstMaxProgNameLen);
+       text[kVstMaxProgNameLen - 1] = '\0';
    }
    return true;
 }
@@ -511,6 +509,10 @@ VstInt32 Vst2PluginInstance::getChunk(void** data, bool isPreset)
    if (!tryInit())
       return 0;
 
+   _instance->populateDawExtraState();
+   if( editor )
+       ((SurgeGUIEditor *)editor)->populateDawExtraState(_instance);
+
    return _instance->saveRaw(data);
    //#endif
 }
@@ -525,17 +527,23 @@ VstInt32 Vst2PluginInstance::setChunk(void* data, VstInt32 byteSize, bool isPres
 
    _instance->loadRaw(data, byteSize, false);
 
+   _instance->loadFromDawExtraState();
+   if( editor )
+       ((SurgeGUIEditor *)editor)->loadFromDAWExtraState(_instance);
+
    return 1;
 }
 
 bool Vst2PluginInstance::beginEdit( VstInt32 index )
 {
-    return AudioEffectX::beginEdit( ((SurgeGUIEditor *)editor)->applyParameterOffset( _instance->remapExternalApiToInternalId(index ) ) );
+   return AudioEffectX::beginEdit(
+       SurgeGUIEditor::applyParameterOffset(_instance->remapExternalApiToInternalId(index)));
 }
 
 bool Vst2PluginInstance::endEdit( VstInt32 index )
 {
-    return AudioEffectX::endEdit( ((SurgeGUIEditor *)editor)->applyParameterOffset( _instance->remapExternalApiToInternalId(index)));
+   return AudioEffectX::endEdit(
+       SurgeGUIEditor::applyParameterOffset(_instance->remapExternalApiToInternalId(index)));
 }
 
 bool Vst2PluginInstance::tryInit()
@@ -580,18 +588,21 @@ bool Vst2PluginInstance::tryInit()
 void Vst2PluginInstance::handleZoom(SurgeGUIEditor *e)
 {
     ERect *vr;
-    if (e->getRect(&vr))
-    {
-        float fzf = e->getZoomFactor() / 100.0;
-        int newW = (vr->right - vr->left) * fzf;
-        int newH = (vr->bottom - vr->top) * fzf;
-        sizeWindow( newW, newH );
-    }
+    float fzf = e->getZoomFactor() / 100.0;
+    int newW = WINDOW_SIZE_X * fzf;
+    int newH = WINDOW_SIZE_Y * fzf;
+    sizeWindow( newW, newH );
 
     VSTGUI::CFrame *frame = e->getFrame();
     if(frame)
     {
         frame->setZoom( e->getZoomFactor() / 100.0 );
+        /*
+        ** cframe::setZoom uses prior size and integer math which means repeated resets drift
+        ** look at the "oroginWidth" math around in CFrame::setZoom. So rather than let those
+        ** drifts accumulate, just reset the size here since we know it
+        */
+        frame->setSize(newW, newH);
         
         /*
         ** VST2 has an error which is that the background bitmap doesn't get the frame transform
