@@ -25,7 +25,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={reg:HKLM\SOFTWARE\VST,VSTPluginsPath|{cf}\VST2}
+DefaultDirName={reg:HKLM\SOFTWARE\VST,VSTPluginsPath|{cf}\VST3}
 DefaultGroupName=Surge
 DisableProgramGroupPage=yes
 LicenseFile=..\LICENSE
@@ -34,19 +34,22 @@ SetupIconFile=surge.ico
 UsePreviousAppDir=no
 Compression=lzma
 SolidCompression=yes
+UninstallFilesDir={{commmonappdata}\Surge}
+
+;; since the fx bank is now a dir not a file we have to force delete the old version in case it was a file
+[InstallDelete]
+Type: filesandordirs; Name: "{cf}\VST3\SurgeEffectsBank.vst3"
 
 [Components]
 Name: Data; Description: Data files; Types: full compact custom; Flags: fixed
-Name: VST2; Description: VST2 Plug-in (64 bit); Types: full custom; Flags: checkablealone
 Name: VST3; Description: VST3 Plug-in (64 bit); Types: full compact custom; Flags: checkablealone
 Name: EffectsVST3; Description: SurgeEffectsBank VST3 Plug-in (64 bit); Types: full compact custom; Flags: checkablealone
 
 [Files]
-Source: ..\target\vst2\Release\Surge.dll; DestDir: {app}; Components: VST2; Flags: ignoreversion skipifsourcedoesntexist
-Source: ..\target\vst3\Release\Surge.vst3; DestDir: {cf}\VST3; Components: VST3; Flags: ignoreversion
-Source: ..\fxbuild\surge-fx\Builds\VisualStudio2017\x64\Release\VST3\SurgeEffectsBank.vst3; DestDir: {cf}\VST3; Components: EffectsVST3; Flags: ignoreversion skipifsourcedoesntexist
-Source: ..\resources\data\*; DestDir: {localappdata}\Surge; Components: Data; Flags: recursesubdirs; Excludes: "*.git";
+Source: ..\resources\data\*; DestDir: {commonappdata}\Surge; Components: Data; Flags: recursesubdirs; Excludes: "*.git";
 Source: ..\resources\fonts\Lato-Regular.ttf; DestDir: "{fonts}"; Components: Data; FontInstall: "Lato"; Flags: onlyifdoesntexist uninsneveruninstall
+Source: ..\build\surge_products\Surge.vst3; DestDir: {cf}\VST3; Components: VST3; Flags: ignoreversion
+Source: ..\surge-fx\build\product\SurgeEffectsBank.vst3; DestDir: {cf}\VST3; Components: EffectsVST3; Flags: ignoreversion skipifsourcedoesntexist recursesubdirs
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -54,3 +57,9 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Icons]
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 
+[Run]
+Filename: "{cmd}"; \
+    WorkingDir: "{cf}\VST3"; \
+    Parameters: "/C mklink /D /J  ""{cf}\VST3\SurgeData"" ""{commonappdata}\Surge"""; \
+    Description: "Install Surge portable by hard linking resources to VST3 Directory"; \
+    Flags: postinstall unchecked runascurrentuser

@@ -1,9 +1,23 @@
-//-------------------------------------------------------------------------------------------------------
-//	Copyright 2005 Claes Johanson & Vember Audio
-//-------------------------------------------------------------------------------------------------------
-#include "CPatchBrowser.h"
+/*
+** Surge Synthesizer is Free and Open Source Software
+**
+** Surge is made available under the Gnu General Public License, v3.0
+** https://www.gnu.org/licenses/gpl-3.0.en.html
+**
+** Copyright 2004-2020 by various individuals as described by the Git transaction log
+**
+** All source at: https://github.com/surge-synthesizer/surge.git
+**
+** Surge was a commercial product from 2004-2018, with Copyright and ownership
+** in that period held by Claes Johanson at Vember Audio. Claes made Surge
+** open source in September 2018.
+*/
 
+#include "SurgeGUIEditor.h"
+#include "CPatchBrowser.h"
 #include "UserInteractions.h"
+#include "guihelpers.h"
+
 #include <vector>
 
 using namespace VSTGUI;
@@ -23,7 +37,7 @@ void CPatchBrowser::draw(CDrawContext* dc)
    // dc->fillRect(ar);
    ar = size;
    ar.inset(2, 2);
-   dc->setFillColor(kWhiteCColor);
+   dc->setFillColor(skin->getColor( "patchbrowser.background", kWhiteCColor) );
    // dc->fillRect(ar);
    // ar.top += 2;
    CRect al(ar);
@@ -33,7 +47,7 @@ void CPatchBrowser::draw(CDrawContext* dc)
    al.left += 3;
    // al.top += 2;
    al.bottom = al.top + 12;
-   dc->setFontColor(kBlackCColor);
+   dc->setFontColor(skin->getColor("patchbrowser.foreground", kBlackCColor) );
    dc->setFont(patchNameFont);
    dc->drawString(pname.c_str(), ar, kCenterText, true);
 
@@ -48,8 +62,6 @@ CMouseEventResult CPatchBrowser::onMouseDown(CPoint& where, const CButtonState& 
 {
    if (!(button & kLButton || button & kRButton))
       return kMouseDownEventHandledButDontNeedMovedOrUpEvents;
-
-   char txt[256];
 
    CRect menurect(0, 0, 0, 0);
    menurect.offset(where.x, where.y);
@@ -76,7 +88,7 @@ CMouseEventResult CPatchBrowser::onMouseDown(CPoint& where, const CButtonState& 
               return kMouseEventHandled;
           for (auto c : storage->patchCategoryOrdering)
           {
-              if (_stricmp(storage->patch_category[c].name.c_str(),"init")==0)
+              if (_stricmp(storage->patch_category[c].name.c_str(),"Init") == 0)
               {
                   rightMouseCategory = c;;
               }
@@ -92,14 +104,25 @@ CMouseEventResult CPatchBrowser::onMouseDown(CPoint& where, const CButtonState& 
    }
    else
    {
+       auto factory_add = contextMenu->addEntry("FACTORY PRESETS");
+       factory_add->setEnabled(0);
+
        for (int i = 0; i < storage->patch_category.size(); i++)
        {
            if ((!single_category) || (i == last_category))
            {
-               if (!single_category &&
-                   ((i == storage->firstThirdPartyCategory) ||
-                    (i == storage->firstUserCategory)))
-                   contextMenu->addEntry("-");
+               if (!single_category && (i == storage->firstThirdPartyCategory || i == storage->firstUserCategory))
+               {
+                   string txt;
+
+                   if (i == storage->firstThirdPartyCategory)
+                      txt = "THIRD PARTY PRESETS";
+                   else
+                      txt = "USER PRESETS";
+
+                   auto add = contextMenu->addEntry(txt.c_str());
+                   add->setEnabled(0);
+               }
 
                // Remap index to the corresponding category in alphabetical order.
                int c = storage->patchCategoryOrdering[i];
@@ -108,16 +131,50 @@ CMouseEventResult CPatchBrowser::onMouseDown(CPoint& where, const CButtonState& 
            }
        }
    }
-   // contextMenu->addEntry("refresh list");
+   
+   contextMenu->addSeparator();
+   
+   auto refreshItem = new CCommandMenuItem(CCommandMenuItem::Desc(Surge::UI::toOSCaseForMenu("Refresh Patch List")));
+   auto refreshAction = [this](CCommandMenuItem *item)
+                           {
+                              this->storage->refresh_patchlist();
+                           };
+   refreshItem->setActions(refreshAction,nullptr);
+   contextMenu->addEntry(refreshItem);
+
+ /*
+    TODO: add menu entries for opening factory and user patch folders!
+ */
+
 
    contextMenu->addSeparator();
-   auto contentItem = new CCommandMenuItem(CCommandMenuItem::Desc("Download Additional Content..."));
+
+   auto contentItem = new CCommandMenuItem(CCommandMenuItem::Desc(Surge::UI::toOSCaseForMenu("Download Additional Content...")));
    auto contentAction = [](CCommandMenuItem *item)
        {
            Surge::UserInteractions::openURL("https://github.com/surge-synthesizer/surge-synthesizer.github.io/wiki/Additional-Content");
        };
    contentItem->setActions(contentAction,nullptr);
    contextMenu->addEntry(contentItem);
+
+
+   auto *sge = dynamic_cast<SurgeGUIEditor*>(listener);
+   if( sge )
+   {
+      auto hu = sge->helpURLForSpecial( "patch-browser" );
+      if( hu != "" )
+      {
+         auto lurl = sge->fullyResolvedHelpURL(hu);
+         auto hi = new CCommandMenuItem( CCommandMenuItem::Desc(Surge::UI::toOSCaseForMenu("Help On The Patch Browser...")));
+         auto ca = [lurl](CCommandMenuItem *i)
+                      {
+                         Surge::UserInteractions::openURL(lurl);
+                      };
+         hi->setActions( ca, nullptr );
+         contextMenu->addEntry(hi);
+      }
+
+   }
    
    getFrame()->addView(contextMenu); // add to frame
    contextMenu->setDirty();
@@ -151,8 +208,9 @@ bool CPatchBrowser::populatePatchMenuForCategory( int c, COptionMenu *contextMen
     int n_subc = 1 + (max(2, (int)ctge.size()) - 1) / splitcount;
     for (int subc = 0; subc < n_subc; subc++)
     {
-        char name[256];
+        string name;
         COptionMenu* subMenu;
+
         if (single_category)
             subMenu = contextMenu;
         else
@@ -166,10 +224,14 @@ bool CPatchBrowser::populatePatchMenuForCategory( int c, COptionMenu *contextMen
         for (int i = subc * splitcount; i < min((subc + 1) * splitcount, (int)ctge.size()); i++)
         {
             int p = ctge[i];
-            // sprintf(name,"%i. %s",p,storage->patch_list[p].name.c_str());
-            sprintf(name, "%s", storage->patch_list[p].name.c_str());
+
+            name = storage->patch_list[p].name;
+
+            #if WINDOWS
+               Surge::Storage::findReplaceSubstring(name, string("&"), string("&&"));
+            #endif
             
-            auto actionItem = new CCommandMenuItem(CCommandMenuItem::Desc(name));
+            auto actionItem = new CCommandMenuItem(CCommandMenuItem::Desc(name.c_str()));
             auto action = [this, p](CCommandMenuItem* item) { this->loadPatch(p); };
             
             if (p == current_patch)
@@ -191,31 +253,40 @@ bool CPatchBrowser::populatePatchMenuForCategory( int c, COptionMenu *contextMen
                 if (cc.name == childcat.name && cc.internalid == childcat.internalid) break;
                 idx++;
             }
+
             bool checkedKid = populatePatchMenuForCategory( idx, subMenu, false, main_e, false );
-            if(checkedKid)
+            if (checkedKid)
             {
                 amIChecked=true;
             }
         }
         
-        std::string menuName = storage->patch_category[c].name;
-        std::string pathSep = "/";
-#if WINDOWS
-        pathSep = "\\";
-#endif
+        string menuName = storage->patch_category[c].name;
+        string pathSep = "/";
+
+        #if WINDOWS
+           pathSep = "\\";
+        #endif
+
         if (menuName.find_last_of(pathSep) != string::npos)
             menuName = menuName.substr(menuName.find_last_of(pathSep) + 1);
         
         if (n_subc > 1)
-            sprintf(name, "%s - %i", menuName.c_str(), subc + 1);
+           name = menuName.c_str() + (subc + 1);
         else
-        {
-           strncpy(name, menuName.c_str(), NAMECHARS);
-        }
+           name = menuName.c_str();
+
+        // tuck in the category name by 4 spaces, but only the root categories
+        if (rootCall)
+           name = "    " + name;
+
+        #if WINDOWS
+           Surge::Storage::findReplaceSubstring(name, string("&"), string("&&"));
+        #endif
 
         if (!single_category)
         {
-            CMenuItem *entry = contextMenu->addEntry(subMenu, name);
+            CMenuItem *entry = contextMenu->addEntry(subMenu, name.c_str());
             if (c == current_category || amIChecked)
                 entry->setChecked(true);
             subMenu->forget(); // Important, so that the refcounter gets it right

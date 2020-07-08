@@ -1,23 +1,19 @@
 #!/bin/bash          
 
 # If no vectors are specified, use the original-vector by default
-if [[ -z "$SURGE_USE_VECTOR_SKIN" ]]; then
-    SURGE_USE_VECTOR_SKIN=original-vector
-fi
-
 # input config
 RES_SRC_LOCATION="resources"
 PACKAGE_SRC_LOCATION="$RES_SRC_LOCATION/osx-vst2"
 
-SVG_SRC_LOCATION="assets/${SURGE_USE_VECTOR_SKIN}/SVG/exported"
+SVG_SRC_LOCATION="assets/original-vector/SVG/exported"
 FONT_SRC_LOCATION="$RES_SRC_LOCATION/fonts"
 
 BUNDLE_RES_SRC_LOCATION="$RES_SRC_LOCATION/osx-resources"
-EXEC_LOCATION="target/vst2/Release/Surge.dylib"
+EXEC_LOCATION="$1"
 #EXEC_LOCATION="target/vst2/Debug/Surge-Debug.dylib"
 
 # output configs
-OUTPUT_DIR=products
+OUTPUT_DIR="$2"
 BUNDLE_NAME="Surge.vst"
 BUNDLE_DIR="$OUTPUT_DIR/$BUNDLE_NAME"
 EXEC_TARGET_NAME="Surge"

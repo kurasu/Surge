@@ -1,6 +1,18 @@
-//-------------------------------------------------------------------------------------------------------
-//	Copyright 2005 Claes Johanson & Vember Audio
-//-------------------------------------------------------------------------------------------------------
+/*
+** Surge Synthesizer is Free and Open Source Software
+**
+** Surge is made available under the Gnu General Public License, v3.0
+** https://www.gnu.org/licenses/gpl-3.0.en.html
+**
+** Copyright 2004-2020 by various individuals as described by the Git transaction log
+**
+** All source at: https://github.com/surge-synthesizer/surge.git
+**
+** Surge was a commercial product from 2004-2018, with Copyright and ownership
+** in that period held by Claes Johanson at Vember Audio. Claes made Surge
+** open source in September 2018.
+*/
+
 #include "SurgeStorage.h"
 #include "Oscillator.h"
 #include "SurgeParamConfig.h"
@@ -35,67 +47,61 @@ const int gui_modsec_x = 6, gui_modsec_y = 398 + gui_topbar;
 
 const int gui_mid_topbar_y = 17;
 
-// XML storage fileformat revision
-// 0 -> 1 new EG attack shapes (0>1, 1>2, 2>2)
-// 1 -> 2 new LFO EG stages (if (decay == max) sustain = max else sustain = min
-// 2 -> 3 filter subtypes added comb should default to 1 and moog to 3
-// 3 -> 4 comb+/- combined into 1 filtertype (subtype 0,0->0 0,1->1 1,0->2 1,1->3 )
-// 4 -> 5 stereo filterconf now have seperate pan controls
-// 5 -> 6 new filter sound in v1.2 (same parameters, but different sound & changed resonance
-// response).
-// 6 -> 7 custom controller state now stored (in seq. recall)
-// 7 -> 8 larger resonance
-// range (old filters are set to subtype 1), pan2 -> width
-// 8 -> 9 now 8 controls (offset ids larger
-// than ctrl7 by +1), custom controllers have names (guess for pre-rev9 patches)
-// 9 -> 10 added character parameter
-// 10 -> 11 (1.6.2 release) added DAW Extra State
-// 11 -> 12 (1.6.3 release) added new parameters to the Distortion effect
-const int ff_revision = 12;
-
 SurgePatch::SurgePatch(SurgeStorage* storage)
 {
    this->storage = storage;
    patchptr = nullptr;
 
-   int p_id = 0;
+   ParameterIDCounter p_id;
    {
       int px = gui_col6_x, py = gui_sendfx_y;
 
-      param_ptr.push_back(fx[4].return_level.assign(p_id++, 0, "volume_FX1", "FX1 Return",
-                                                    ct_amplitude, px, py, 0, cg_GLOBAL, 0, true,
+      param_ptr.push_back(fx[4].return_level.assign(p_id.next(), 0, "volume_FX1", "Send FX 1 Return",
+                                                    ct_amplitude,
+                                                    "global.fx1_return", px, py,
+                                                    0, cg_GLOBAL, 0, true,
                                                     Surge::ParamConfig::kHorizontal));
       py += gui_hfader_dist;
-      param_ptr.push_back(fx[5].return_level.assign(p_id++, 0, "volume_FX2", "FX2 Return",
-                                                    ct_amplitude, px, py, 0, cg_GLOBAL, 0, true,
+      param_ptr.push_back(fx[5].return_level.assign(p_id.next(), 0, "volume_FX2", "Send FX 2 Return",
+                                                    ct_amplitude,
+                                                    "global.fx2_return", px, py,
+                                                    0, cg_GLOBAL, 0, true,
                                                     Surge::ParamConfig::kHorizontal));
       py += gui_hfader_dist;
 
       // TODO don't store in the patch ?
       param_ptr.push_back(volume.assign(
-          p_id++, 0, "volume", "Master Volume", ct_decibel_attenuation, hmargin + gui_sec_width * 5,
-          gui_mid_topbar_y + 12, 0, cg_GLOBAL, 0, true, Surge::ParamConfig::kHorizontal | kEasy));
+          p_id.next(), 0, "volume", "Master Volume", ct_decibel_attenuation,
+          "global.master_volume", hmargin + gui_sec_width * 5, gui_mid_topbar_y + 12,
+          0, cg_GLOBAL, 0, true, Surge::ParamConfig::kHorizontal | kEasy));
    }
-   param_ptr.push_back(scene_active.assign(p_id++, 0, "scene_active", "Active Scene", ct_scenesel,
-                                           7, gui_mid_topbar_y - 2, 0, cg_GLOBAL, 0, false,
+   param_ptr.push_back(scene_active.assign(p_id.next(), 0, "scene_active", "Active Scene", ct_scenesel,
+                                           "global.active_scene", 7, gui_mid_topbar_y - 2,
+                                           0, cg_GLOBAL, 0, false,
                                            Surge::ParamConfig::kHorizontal));
-   param_ptr.push_back(scenemode.assign(p_id++, 0, "scenemode", "Scene Mode", ct_scenemode,
-                                        8 + 51 + 3, gui_mid_topbar_y - 2, 0, cg_GLOBAL, 0, false,
+   param_ptr.push_back(scenemode.assign(p_id.next(), 0, "scenemode", "Scene Mode", ct_scenemode,
+                                        "global.scene_mode", 8 + 51 + 3, gui_mid_topbar_y - 4,
+                                        0, cg_GLOBAL, 0, false,
                                         Surge::ParamConfig::kHorizontal | kNoPopup));
-   // param_ptr.push_back(scenemorph.assign(p_id++,0,"scenemorph","scenemorph",ct_percent,hmargin+gui_sec_width,gui_mid_topbar_y,0,0,0,false,Surge::ParamConfig::kHorizontal));
+   // param_ptr.push_back(scenemorph.assign(p_id.next(),0,"scenemorph","scenemorph",ct_percent,hmargin+gui_sec_width,gui_mid_topbar_y,0,0,0,false,Surge::ParamConfig::kHorizontal));
 
-   param_ptr.push_back(splitkey.assign(p_id++, 0, "splitkey", "Split Key", ct_midikey, 8 + 91,
-                                       gui_mid_topbar_y - 3, 0, cg_GLOBAL, 0, false,
+   param_ptr.push_back(splitkey.assign(p_id.next(), 0, "splitkey", "Split Key", ct_midikey_or_channel,
+                                       "global.splitkey", 8 + 91, gui_mid_topbar_y - 3,
+                                       0, cg_GLOBAL, 0, false,
                                        Surge::ParamConfig::kHorizontal | kNoPopup));
-   param_ptr.push_back(fx_disable.assign(p_id++, 0, "fx_disable", "FX Disable", ct_none, 0, 0, 0,
-                                         cg_GLOBAL, 0, false));
+   
+   param_ptr.push_back(fx_disable.assign(p_id.next(), 0, "fx_disable", "FX Disable", ct_none,
+                                         "global.fx_disable", 0, 0,
+                                         0, cg_GLOBAL, 0, false));
 
    // shouldnt't be stored in the patch
-   param_ptr.push_back(polylimit.assign(p_id++, 0, "polylimit", "Poly Limit", ct_polylimit, 8 + 91,
-                                        gui_mid_topbar_y + 13, 0, cg_GLOBAL, 0, false,
+   param_ptr.push_back(polylimit.assign(p_id.next(), 0, "polylimit", "Polyphony Limit", ct_polylimit,
+                                        "global.polylimit", 8 + 91, gui_mid_topbar_y + 13,
+                                        0, cg_GLOBAL, 0, false,
                                         Surge::ParamConfig::kHorizontal | kNoPopup));
-   param_ptr.push_back(fx_bypass.assign(p_id++, 0, "fx_bypass", "FX Bypass", ct_fxbypass, 607,
-                                        gui_mid_topbar_y - 6, 0, cg_GLOBAL, 0, false,
+   param_ptr.push_back(fx_bypass.assign(p_id.next(), 0, "fx_bypass", "FX Bypass", ct_fxbypass,
+                                        "global.fx_bypass", 607, gui_mid_topbar_y - 6,
+                                        0, cg_GLOBAL, 0, false,
                                         Surge::ParamConfig::kHorizontal | kNoPopup));
 
    polylimit.val.i = 8;
@@ -106,21 +112,27 @@ SurgePatch::SurgePatch(SurgeStorage* storage)
    {
       int px = gui_col6_x, py = gui_sendfx_y + 20 * 3;
 
-      param_ptr.push_back(this->fx[fx].type.assign(p_id++, 0, "type", "FX type", ct_fxtype, px,
-                                                   py - 2, 0, cg_FX, fx, false, Surge::ParamConfig::kHorizontal));
+      param_ptr.push_back(this->fx[fx].type.assign(p_id.next(), 0, "type", "FX Type", ct_fxtype,
+                                                   "FX.fxtype", px, py - 2,
+                                                   0, cg_FX, fx, false, Surge::ParamConfig::kHorizontal));
       py += 20;
       for (int p = 0; p < n_fx_params; p++)
       {
          char label[16];
          sprintf(label, "p%i", p);
+         char dawlabel[32];
+         sprintf(dawlabel, "Param %i", p + 1);
          param_ptr.push_back(
-             this->fx[fx].p[p].assign(p_id++, 0, label, "param", ct_none, px, py, 0, cg_FX, fx,
+             this->fx[fx].p[p].assign(p_id.next(), 0, label, dawlabel, ct_none,
+                                      "FX.param_" + std::to_string(p+1), px, py,
+                                      0, cg_FX, fx,
                                       true, Surge::ParamConfig::kHorizontal | kHide | ((fx == 0) ? kEasy : 0)));
          py += 20;
       }
    }
 
-   int globparams = p_id;
+   ParameterIDCounter::promise_t globparams_promise = p_id.tail;
+   ParameterIDCounter::promise_t scene_start_promise[2];
 
    for (int sc = 0; sc < 2; sc++)
    {
@@ -134,54 +146,70 @@ SurgePatch::SurgePatch(SurgeStorage* storage)
 
       int sc_id = (sc & 1) + 1;
 
-      scene_start[sc] = p_id;
+      scene_start_promise[sc] = p_id.tail;
 
       px = gui_col2_x;
       py = gui_mainsec_y;
-      a->push_back(scene[sc].octave.assign(p_id++, id_s++, "octave", "Octave", ct_pitch_octave,
-                                           px + 46, py + 1, sc_id, cg_GLOBAL, 0, false,
+      a->push_back(scene[sc].octave.assign(p_id.next(), id_s++, "octave", "Octave", ct_pitch_octave,
+                                           "scene.octave", px + 46, py + 1,
+                                           sc_id, cg_GLOBAL, 0, false,
                                            Surge::ParamConfig::kHorizontal | kNoPopup));
       py = gui_mainsec_slider_y;
-      a->push_back(scene[sc].pitch.assign(p_id++, id_s++, "pitch", "Pitch", ct_pitch_semi7bp, px,
-                                          py, sc_id, cg_GLOBAL, 0, true,
+      a->push_back(scene[sc].pitch.assign(p_id.next(), id_s++, "pitch", "Pitch", ct_pitch_semi7bp,
+                                          "scene.pitch", px, py,
+                                          sc_id, cg_GLOBAL, 0, true,
                                           Surge::ParamConfig::kHorizontal | kSemitone | sceasy));
       py += gui_hfader_dist;
-      a->push_back(scene[sc].portamento.assign(p_id++, id_s++, "portamento", "Portamento",
-                                               ct_portatime, px, py, sc_id, cg_GLOBAL, 0, true,
+      a->push_back(scene[sc].portamento.assign(p_id.next(), id_s++, "portamento", "Portamento",
+                                               ct_portatime,
+                                               "scene.portatime", px, py,
+                                               sc_id, cg_GLOBAL, 0, true,
                                                Surge::ParamConfig::kHorizontal | sceasy));
       py += gui_hfader_dist;
       for (int osc = 0; osc < n_oscs; osc++)
       {
+         // Initialize the display name here
+         scene[sc].osc[osc].wavetable_display_name[0] = '\0';
+         
          px = gui_col1_x;
          py = gui_mainsec_y;
 
-         a->push_back(scene[sc].osc[osc].type.assign(p_id++, id_s++, "type", "Type", ct_osctype,
-                                                     px + 3, py + 1, sc_id, cg_OSC, osc, false));
-         a->push_back(scene[sc].osc[osc].octave.assign(p_id++, id_s++, "octave", "Octave",
-                                                       ct_pitch_octave, px - 3, py + 1, sc_id,
-                                                       cg_OSC, osc, false, Surge::ParamConfig::kHorizontal | kNoPopup));
+         a->push_back(scene[sc].osc[osc].type.assign(p_id.next(), id_s++, "type", "Type", ct_osctype,
+                                                     "osc.osctype", px + 3, py + 1,
+                                                     sc_id, cg_OSC, osc, false));
+         a->push_back(scene[sc].osc[osc].octave.assign(p_id.next(), id_s++, "octave", "Octave",
+                                                       ct_pitch_octave,
+                                                       "osc.octave", px - 3, py + 1,
+                                                       sc_id, cg_OSC, osc, false, Surge::ParamConfig::kHorizontal | kNoPopup));
          py = gui_mainsec_slider_y;
-         a->push_back(scene[sc].osc[osc].pitch.assign(p_id++, id_s++, "pitch", "Pitch",
-                                                      ct_pitch_semi7bp_absolutable, px, py, sc_id, cg_OSC, osc,
+         a->push_back(scene[sc].osc[osc].pitch.assign(p_id.next(), id_s++, "pitch", "Pitch",
+                                                      ct_pitch_semi7bp_absolutable,
+                                                      "osc.pitch", px, py,
+                                                      sc_id, cg_OSC, osc,
                                                       true, Surge::ParamConfig::kHorizontal | kSemitone | sceasy));
          py += gui_hfader_dist;
          for (int i = 0; i < n_osc_params; i++)
          {
             char label[16];
             sprintf(label, "param%i", i);
-            a->push_back(scene[sc].osc[osc].p[i].assign(p_id++, id_s++, label, "-", ct_none, px, py,
+            a->push_back(scene[sc].osc[osc].p[i].assign(p_id.next(), id_s++, label, "-", ct_none,
+                                                        "osc.param_" + std::to_string(i+1), px, py,
                                                         sc_id, cg_OSC, osc, true,
                                                         Surge::ParamConfig::kHorizontal | ((i < 6) ? sceasy : 0)));
             py += gui_hfader_dist;
          }
          py = gui_mainsec_y - 7;
-         a->push_back(scene[sc].osc[osc].keytrack.assign(p_id++, id_s++, "keytrack", "Keytrack",
-                                                         ct_bool_keytrack, px + 2, py, sc_id,
+         a->push_back(scene[sc].osc[osc].keytrack.assign(p_id.next(), id_s++, "keytrack", "Keytrack",
+                                                         ct_bool_keytrack,
+                                                         "osc.keytrack", px + 2, py,
+                                                         sc_id,
                                                          cg_OSC, osc, false, Surge::ParamConfig::kHorizontal));
-         a->push_back(scene[sc].osc[osc].retrigger.assign(p_id++, id_s++, "retrigger", "Retrigger",
-                                                          ct_bool_retrigger, px + 50, py, sc_id,
+         a->push_back(scene[sc].osc[osc].retrigger.assign(p_id.next(), id_s++, "retrigger", "Retrigger",
+                                                          ct_bool_retrigger,
+                                                          "osc.retrigger", px + 50, py,
+                                                          sc_id,
                                                           cg_OSC, osc, false, Surge::ParamConfig::kHorizontal));
-         // a->push_back(scene[sc].osc[osc].startphase.assign(p_id++,id_s++,"startphase","start
+         // a->push_back(scene[sc].osc[osc].startphase.assign(p_id.next(),id_s++,"startphase","start
          // phase",ct_none,0,0,sc_id,2,osc,false));
 
          /*scene[sc].osc[osc].wt.n_tables = 8;
@@ -193,175 +221,204 @@ SurgePatch::SurgePatch(SurgeStorage* storage)
          + 1.0) * M_PI * x);
          }*/
       }
-      a->push_back(scene[sc].polymode.assign(p_id++, id_s++, "polymode", "Polymode", ct_polymode,
-                                             gui_col2_x + 83, gui_uppersec_y + 9, sc_id, cg_GLOBAL,
+      a->push_back(scene[sc].polymode.assign(p_id.next(), id_s++, "polymode", "Play Mode", ct_polymode,
+                                             "global.playmode", gui_col2_x + 83, gui_uppersec_y + 9,
+                                             sc_id, cg_GLOBAL,
                                              0, false, Surge::ParamConfig::kVertical | kWhite | kNoPopup));
-      a->push_back(scene[sc].fm_switch.assign(p_id++, id_s++, "fm_switch", "FM Routing",
-                                              ct_fmconfig, gui_col3_x + 3, gui_topbar + 25, sc_id,
+      a->push_back(scene[sc].fm_switch.assign(p_id.next(), id_s++, "fm_switch", "FM Routing",
+                                              ct_fmconfig,
+                                              "global.fmrouting", gui_col3_x + 3, gui_topbar + 25,
+                                              sc_id,
                                               cg_GLOBAL, 0, false));
-      a->push_back(scene[sc].fm_depth.assign(p_id++, id_s++, "fm_depth", "FM Depth",
-                                             ct_decibel_fmdepth, gui_col3_x,
-                                             gui_uppersec_y + gui_hfader_dist * 4, sc_id, cg_GLOBAL,
+      a->push_back(scene[sc].fm_depth.assign(p_id.next(), id_s++, "fm_depth", "FM Depth",
+                                             ct_decibel_fmdepth,
+                                             "global.fmdepth", gui_col3_x, gui_uppersec_y + gui_hfader_dist * 4,
+                                             sc_id, cg_GLOBAL,
                                              0, true, Surge::ParamConfig::kHorizontal | kWhite | sceasy));
 
-      a->push_back(scene[sc].drift.assign(p_id++, id_s++, "drift", "Osc Drift", ct_percent,
-                                          gui_col2_x, gui_uppersec_y + gui_hfader_dist * 3, sc_id,
+      a->push_back(scene[sc].drift.assign(p_id.next(), id_s++, "drift", "Osc Drift", ct_percent,
+                                          "global.drift", gui_col2_x, gui_uppersec_y + gui_hfader_dist * 3,
+                                          sc_id,
                                           cg_GLOBAL, 0, true, Surge::ParamConfig::kHorizontal | kWhite));
       a->push_back(scene[sc].noise_colour.assign(
-          p_id++, id_s++, "noisecol", "Noise Color", ct_percent_bidirectional, gui_col2_x,
-          gui_uppersec_y + gui_hfader_dist * 4, sc_id, cg_GLOBAL, 0, true,
+          p_id.next(), id_s++, "noisecol", "Noise Color", ct_percent_bidirectional,
+          "global.noise_color", gui_col2_x, gui_uppersec_y + gui_hfader_dist * 4, sc_id, cg_GLOBAL, 0, true,
           Surge::ParamConfig::kHorizontal | kWhite | sceasy));
-      a->push_back(scene[sc].keytrack_root.assign(p_id++, id_s++, "ktrkroot", "Keytrack Root Key",
-                                                  ct_midikey, 180 + 127, gui_topbar + 78 + 106 + 24,
+      a->push_back(scene[sc].keytrack_root.assign(p_id.next(), id_s++, "ktrkroot", "Keytrack Root Key",
+                                                  ct_midikey,
+                                                  "global.keytrack_root", 180 + 127, gui_topbar + 78 + 106 + 24,
                                                   sc_id, cg_GLOBAL, 0, false));
       // ct_midikey
       // drift,keytrack_root
 
       px = gui_col5_x;
       py = gui_uppersec_y;
-      a->push_back(scene[sc].volume.assign(p_id++, id_s++, "volume", "Volume", ct_amplitude, px, py,
+      a->push_back(scene[sc].volume.assign(p_id.next(), id_s++, "volume", "Volume", ct_amplitude,
+                                           "global.volume", px, py,
                                            sc_id, cg_GLOBAL, 0, true,
                                            Surge::ParamConfig::kHorizontal | kWhite | sceasy));
       py += gui_hfader_dist;
-      a->push_back(scene[sc].pan.assign(p_id++, id_s++, "pan", "Pan", ct_percent_bidirectional, px,
-                                        py, sc_id, cg_GLOBAL, 0, true,
+      a->push_back(scene[sc].pan.assign(p_id.next(), id_s++, "pan", "Pan", ct_percent_bidirectional,
+                                        "global.pan", px, py,
+                                        sc_id, cg_GLOBAL, 0, true,
                                         Surge::ParamConfig::kHorizontal | kWhite | sceasy));
       py += gui_hfader_dist;
-      a->push_back(scene[sc].width.assign(p_id++, id_s++, "pan2", "Width", ct_percent_bidirectional,
-                                          px, py, sc_id, cg_GLOBAL, 0, true,
+      a->push_back(scene[sc].width.assign(p_id.next(), id_s++, "pan2", "Width", ct_percent_bidirectional,
+                                          "global.width", px, py,
+                                          sc_id, cg_GLOBAL, 0, true,
                                           Surge::ParamConfig::kHorizontal | kWhite | sceasy));
       py += gui_hfader_dist;
-      a->push_back(scene[sc].send_level[0].assign(p_id++, id_s++, "send_fx_1", "FX1 Send",
-                                                  ct_amplitude, px, py, sc_id, cg_GLOBAL, 0, true,
+      a->push_back(scene[sc].send_level[0].assign(p_id.next(), id_s++, "send_fx_1", "Send FX 1 Level",
+                                                  ct_sendlevel,
+                                                  "global.send_fx_1", px, py,
+                                                  sc_id, cg_GLOBAL, 0, true,
                                                   Surge::ParamConfig::kHorizontal | kWhite | sceasy));
       py += gui_hfader_dist;
-      a->push_back(scene[sc].send_level[1].assign(p_id++, id_s++, "send_fx_2", "FX2 Send",
-                                                  ct_amplitude, px, py, sc_id, cg_GLOBAL, 0, true,
+      a->push_back(scene[sc].send_level[1].assign(p_id.next(), id_s++, "send_fx_2", "Send FX 2 Level",
+                                                  ct_sendlevel,
+                                                  "global.send_fx_2", px, py,
+                                                  sc_id, cg_GLOBAL, 0, true,
                                                   Surge::ParamConfig::kHorizontal | kWhite | sceasy));
-      scene[sc].send_level[0].val_max.f = 1.5874f;
-      scene[sc].send_level[1].val_max.f = 1.5874f;
-
       px = gui_oscmix_x;
       py = gui_oscmix_y;
       int mof = -36, sof = mof + 10, rof = mof + 20;
-      a->push_back(scene[sc].level_o1.assign(p_id++, id_s++, "level_o1", "Osc1 Level", ct_amplitude,
-                                             px, py, sc_id, cg_MIX, 0, true,
+      a->push_back(scene[sc].level_o1.assign(p_id.next(), id_s++, "level_o1", "Osc 1 Level", ct_amplitude,
+                                             "mix.level_o1", px, py, sc_id, cg_MIX, 0, true,
                                              Surge::ParamConfig::kVertical | kWhite | sceasy));
-      a->push_back(scene[sc].mute_o1.assign(p_id++, id_s++, "mute_o1", "Osc1 Mute", ct_bool_mute,
-                                            px, py + mof, sc_id, cg_MIX, 0, false));
-      a->push_back(scene[sc].solo_o1.assign(p_id++, id_s++, "solo_o1", "Osc1 Solo", ct_bool_solo,
-                                            px, py + sof, sc_id, cg_MIX, 0, false, kMeta));
-      a->push_back(scene[sc].route_o1.assign(p_id++, id_s++, "route_o1", "Osc1 Route", ct_oscroute,
-                                             px, py + rof, sc_id, cg_MIX, 0, false));
+      a->push_back(scene[sc].mute_o1.assign(p_id.next(), id_s++, "mute_o1", "Osc 1 Mute", ct_bool_mute,
+                                            "mix.mute_o1", px, py + mof,
+                                            sc_id, cg_MIX, 0, false));
+      a->push_back(scene[sc].solo_o1.assign(p_id.next(), id_s++, "solo_o1", "Osc 1 Solo", ct_bool_solo,
+                                            "mix.solo_o1", px, py + sof, sc_id, cg_MIX, 0, false, kMeta));
+      a->push_back(scene[sc].route_o1.assign(p_id.next(), id_s++, "route_o1", "Osc 1 Route", ct_oscroute,
+                                             "mix.route_o1", px, py + rof, sc_id, cg_MIX, 0, false));
       px += gui_vfader_dist;
-      a->push_back(scene[sc].level_o2.assign(p_id++, id_s++, "level_o2", "Osc2 Level", ct_amplitude,
-                                             px, py, sc_id, cg_MIX, 0, true,
+      a->push_back(scene[sc].level_o2.assign(p_id.next(), id_s++, "level_o2", "Osc 2 Level", ct_amplitude,
+                                             "mix.level_o2", px, py, sc_id, cg_MIX, 0, true,
                                              Surge::ParamConfig::kVertical | kWhite | sceasy));
-      a->push_back(scene[sc].mute_o2.assign(p_id++, id_s++, "mute_o2", "Osc2 Mute", ct_bool_mute,
-                                            px, py + mof, sc_id, cg_MIX, 0, false));
-      a->push_back(scene[sc].solo_o2.assign(p_id++, id_s++, "solo_o2", "Osc2 Solo", ct_bool_solo,
-                                            px, py + sof, sc_id, cg_MIX, 0, false, kMeta));
-      a->push_back(scene[sc].route_o2.assign(p_id++, id_s++, "route_o2", "Osc2 Route", ct_oscroute,
-                                             px, py + rof, sc_id, cg_MIX, 0, false));
+      a->push_back(scene[sc].mute_o2.assign(p_id.next(), id_s++, "mute_o2", "Osc 2 Mute", ct_bool_mute,
+                                            "mix.mute_o2", px, py + mof, sc_id, cg_MIX, 0, false));
+      a->push_back(scene[sc].solo_o2.assign(p_id.next(), id_s++, "solo_o2", "Osc 2 Solo", ct_bool_solo,
+                                            "mix.solo_o2", px, py + sof, sc_id, cg_MIX, 0, false, kMeta));
+      a->push_back(scene[sc].route_o2.assign(p_id.next(), id_s++, "route_o2", "Osc 2 Route", ct_oscroute,
+                                             "mix.route_o2", px, py + rof, sc_id, cg_MIX, 0, false));
       px += gui_vfader_dist;
-      a->push_back(scene[sc].level_o3.assign(p_id++, id_s++, "level_o3", "Osc3 Level", ct_amplitude,
-                                             px, py, sc_id, cg_MIX, 0, true,
+      a->push_back(scene[sc].level_o3.assign(p_id.next(), id_s++, "level_o3", "Osc 3 Level", ct_amplitude,
+                                             "mix.level_o3", px, py, sc_id, cg_MIX, 0, true,
                                              Surge::ParamConfig::kVertical | kWhite | sceasy));
-      a->push_back(scene[sc].mute_o3.assign(p_id++, id_s++, "mute_o3", "Osc3 Mute", ct_bool_mute,
-                                            px, py + mof, sc_id, cg_MIX, 0, false));
-      a->push_back(scene[sc].solo_o3.assign(p_id++, id_s++, "solo_o3", "Osc3 Solo", ct_bool_solo,
-                                            px, py + sof, sc_id, cg_MIX, 0, false, kMeta));
-      a->push_back(scene[sc].route_o3.assign(p_id++, id_s++, "route_o3", "Osc3 Route", ct_oscroute,
-                                             px, py + rof, sc_id, cg_MIX, 0, false));
+      a->push_back(scene[sc].mute_o3.assign(p_id.next(), id_s++, "mute_o3", "Osc 3 Mute", ct_bool_mute,
+                                            "mix.mute_o3", px, py + mof, sc_id, cg_MIX, 0, false));
+      a->push_back(scene[sc].solo_o3.assign(p_id.next(), id_s++, "solo_o3", "Osc 3 Solo", ct_bool_solo,
+                                            "mix.solo_o3", px, py + sof, sc_id, cg_MIX, 0, false, kMeta));
+      a->push_back(scene[sc].route_o3.assign(p_id.next(), id_s++, "route_o3", "Osc 3 Route", ct_oscroute,
+                                             "mix.route_o3", px, py + rof, sc_id, cg_MIX, 0, false));
       px += gui_vfader_dist;
-      a->push_back(scene[sc].level_ring_12.assign(p_id++, id_s++, "level_ring12", "Ring Level 1x2",
-                                                  ct_amplitude, px, py, sc_id, cg_MIX, 0, true,
+      a->push_back(scene[sc].level_ring_12.assign(p_id.next(), id_s++, "level_ring12", "Ring Modulation 1x2 Level",
+                                                  ct_amplitude,
+                                                  "mix.level_ring12", px, py, sc_id, cg_MIX, 0, true,
                                                   Surge::ParamConfig::kVertical | kWhite | sceasy));
-      a->push_back(scene[sc].mute_ring_12.assign(p_id++, id_s++, "mute_ring12", "Ring Mute 1x2",
-                                                 ct_bool_mute, px, py + mof, sc_id, cg_MIX, 0,
+      a->push_back(scene[sc].mute_ring_12.assign(p_id.next(), id_s++, "mute_ring12", "Ring Modulation 1x2 Mute",
+                                                 ct_bool_mute,
+                                                 "mix.mute_ring12", px, py + mof, sc_id, cg_MIX, 0,
                                                  false));
-      a->push_back(scene[sc].solo_ring_12.assign(p_id++, id_s++, "solo_ring12", "Ring Solo 1x2",
-                                                 ct_bool_solo, px, py + sof, sc_id, cg_MIX, 0,
+      a->push_back(scene[sc].solo_ring_12.assign(p_id.next(), id_s++, "solo_ring12", "Ring Modulation 1x2 Solo",
+                                                 ct_bool_solo,
+                                                 "mix.solo_ring12", px, py + sof, sc_id, cg_MIX, 0,
                                                  false, kMeta));
-      a->push_back(scene[sc].route_ring_12.assign(p_id++, id_s++, "route_ring12", "Ring Route 1x2",
-                                                  ct_oscroute, px, py + rof, sc_id, cg_MIX, 0,
+      a->push_back(scene[sc].route_ring_12.assign(p_id.next(), id_s++, "route_ring12", "Ring Modulation 1x2 Route",
+                                                  ct_oscroute,
+                                                  "mix.route_ring12", px, py + rof, sc_id, cg_MIX, 0,
                                                   false));
       px += gui_vfader_dist;
-      a->push_back(scene[sc].level_ring_23.assign(p_id++, id_s++, "level_ring23", "Ring Level 2x3",
-                                                  ct_amplitude, px, py, sc_id, cg_MIX, 0, true,
+      a->push_back(scene[sc].level_ring_23.assign(p_id.next(), id_s++, "level_ring23", "Ring Modulation 2x3 Level",
+                                                  ct_amplitude,
+                                                  "mix.level_ring23", px, py, sc_id, cg_MIX, 0, true,
                                                   Surge::ParamConfig::kVertical | kWhite | sceasy));
-      a->push_back(scene[sc].mute_ring_23.assign(p_id++, id_s++, "mute_ring23", "Ring Mute 2x3",
-                                                 ct_bool_mute, px, py + mof, sc_id, cg_MIX, 0,
+      a->push_back(scene[sc].mute_ring_23.assign(p_id.next(), id_s++, "mute_ring23", "Ring Modulation 2x3 Mute",
+                                                 ct_bool_mute,
+                                                 "mix.mute_ring23", px, py + mof, sc_id, cg_MIX, 0,
                                                  false));
-      a->push_back(scene[sc].solo_ring_23.assign(p_id++, id_s++, "solo_ring23", "Ring Solo 2x3",
-                                                 ct_bool_solo, px, py + sof, sc_id, cg_MIX, 0,
+      a->push_back(scene[sc].solo_ring_23.assign(p_id.next(), id_s++, "solo_ring23", "Ring Modulation 2x3 Solo",
+                                                 ct_bool_solo,
+                                                 "mix.solo_ring23", px, py + sof, sc_id, cg_MIX, 0,
                                                  false, kMeta));
-      a->push_back(scene[sc].route_ring_23.assign(p_id++, id_s++, "route_ring23", "Ring Route 2x3",
-                                                  ct_oscroute, px, py + rof, sc_id, cg_MIX, 0,
+      a->push_back(scene[sc].route_ring_23.assign(p_id.next(), id_s++, "route_ring23", "Ring Modulation 2x3 Route",
+                                                  ct_oscroute,
+                                                  "mix.route_ring23", px, py + rof, sc_id, cg_MIX, 0,
                                                   false));
       px += gui_vfader_dist;
-      a->push_back(scene[sc].level_noise.assign(p_id++, id_s++, "level_noise", "Noise Level",
-                                                ct_amplitude, px, py, sc_id, cg_MIX, 0, true,
+      a->push_back(scene[sc].level_noise.assign(p_id.next(), id_s++, "level_noise", "Noise Level",
+                                                ct_amplitude,
+                                                "mix.level_noise", px, py, sc_id, cg_MIX, 0, true,
                                                 Surge::ParamConfig::kVertical | kWhite | sceasy));
-      a->push_back(scene[sc].mute_noise.assign(p_id++, id_s++, "mute_noise", "Noise Mute",
-                                               ct_bool_mute, px, py + mof, sc_id, cg_MIX, 0,
+      a->push_back(scene[sc].mute_noise.assign(p_id.next(), id_s++, "mute_noise", "Noise Mute",
+                                               ct_bool_mute,
+                                               "mix.mute_noise", px, py + mof, sc_id, cg_MIX, 0,
                                                false));
-      a->push_back(scene[sc].solo_noise.assign(p_id++, id_s++, "solo_noise", "Noise Solo",
-                                               ct_bool_solo, px, py + sof, sc_id, cg_MIX, 0, false,
+      a->push_back(scene[sc].solo_noise.assign(p_id.next(), id_s++, "solo_noise", "Noise Solo",
+                                               ct_bool_solo,
+                                               "mix.solo_noise", px, py + sof, sc_id, cg_MIX, 0, false,
                                                kMeta));
-      a->push_back(scene[sc].route_noise.assign(p_id++, id_s++, "route_noise", "Noise Route",
-                                                ct_oscroute, px, py + rof, sc_id, cg_MIX, 0,
+      a->push_back(scene[sc].route_noise.assign(p_id.next(), id_s++, "route_noise", "Noise Route",
+                                                ct_oscroute,
+                                                "mix.route_noise", px, py + rof, sc_id, cg_MIX, 0,
                                                 false));
       px += gui_vfader_dist;
-      a->push_back(scene[sc].level_pfg.assign(p_id++, id_s++, "level_pfg", "Pre-Filter Gain",
-                                              ct_decibel, px, py, sc_id, cg_MIX, 0, true,
+      a->push_back(scene[sc].level_pfg.assign(p_id.next(), id_s++, "level_pfg", "Pre-Filter Gain",
+                                              ct_decibel,
+                                              "mix.level_prefiltergain", px, py, sc_id, cg_MIX, 0, true,
                                               Surge::ParamConfig::kVertical | kWhite | sceasy));
       px += gui_vfader_dist;
 
       int pbx = 164, pby = 112;
-      a->push_back(scene[sc].pbrange_up.assign(p_id++, id_s++, "pbrange_up",
-                                               "Pitch Bend Range (up)", ct_pbdepth, pbx + 25, pby,
+      a->push_back(scene[sc].pbrange_up.assign(p_id.next(), id_s++, "pbrange_up",
+                                               "Pitch Bend Up Range", ct_pbdepth,
+                                               "global.pbrange_up", pbx + 25, pby,
                                                sc_id, cg_GLOBAL, 0, true, kNoPopup));
-      a->push_back(scene[sc].pbrange_dn.assign(p_id++, id_s++, "pbrange_dn",
-                                               "Pitch Bend Range (down)", ct_pbdepth, pbx, pby,
+      a->push_back(scene[sc].pbrange_dn.assign(p_id.next(), id_s++, "pbrange_dn",
+                                               "Pitch Bend Down Range", ct_pbdepth,
+                                               "global.pbrange_dn", pbx, pby,
                                                sc_id, cg_GLOBAL, 0, true, kNoPopup));
 
       px = gui_envsec_x + gui_vfader_dist * 19 + 10;
       py = gui_envsec_y;
-      a->push_back(scene[sc].vca_level.assign(p_id++, id_s++, "vca_level", "Gain", ct_decibel, px,
-                                              py, sc_id, cg_GLOBAL, 0, true,
+      a->push_back(scene[sc].vca_level.assign(p_id.next(), id_s++, "vca_level", "VCA Gain", ct_decibel,
+                                              "global.gain", px, py, sc_id, cg_GLOBAL, 0, true,
                                               Surge::ParamConfig::kVertical | kWhite | sceasy));
       px += gui_vfader_dist;
-      a->push_back(scene[sc].vca_velsense.assign(p_id++, id_s++, "vca_velsense", "Velocity > Gain",
-                                                 ct_decibel_attenuation, px, py, sc_id, cg_GLOBAL,
+      a->push_back(scene[sc].vca_velsense.assign(p_id.next(), id_s++, "vca_velsense", "Velocity > VCA Gain",
+                                                 ct_decibel_attenuation,
+                                                 "global.velocity_sensitivity", px, py, sc_id, cg_GLOBAL,
                                                  0, false, Surge::ParamConfig::kVertical | kWhite));
       px += gui_vfader_dist;
 
       px = gui_col3_x + gui_sec_width + 1;
       py = gui_uppersec_y + gui_hfader_dist * 4;
-      a->push_back(scene[sc].feedback.assign(p_id++, id_s++, "feedback", "Feedback",
-                                             ct_percent_bidirectional, px, py, sc_id, cg_GLOBAL, 0,
+      a->push_back(scene[sc].feedback.assign(p_id.next(), id_s++, "feedback", "Feedback",
+                                             ct_percent_bidirectional,
+                                             "filter.feedback", px, py, sc_id, cg_GLOBAL, 0,
                                              true, Surge::ParamConfig::kHorizontal | kWhite | sceasy));
       py += gui_hfader_dist;
 
       a->push_back(scene[sc].filterblock_configuration.assign(
-          p_id++, id_s++, "fb_config", "Filter Configuration", ct_fbconfig, gui_col4_x - 1,
-          gui_topbar + 25, sc_id, cg_GLOBAL, 0, false, Surge::ParamConfig::kHorizontal));
+          p_id.next(), id_s++, "fb_config", "Filter Configuration", ct_fbconfig,
+          "filter.config", gui_col4_x - 1, gui_topbar + 25, sc_id, cg_GLOBAL, 0, false, Surge::ParamConfig::kHorizontal));
       a->push_back(scene[sc].filter_balance.assign(
-          p_id++, id_s++, "f_balance", "Filter Balance", ct_percent_bidirectional, gui_col4_x,
-          gui_mainsec_slider_y + 11, sc_id, cg_GLOBAL, 0, true, Surge::ParamConfig::kHorizontal | sceasy));
+          p_id.next(), id_s++, "f_balance", "Filter Balance", ct_percent_bidirectional,
+          "filter.balance", gui_col4_x, gui_mainsec_slider_y + 11, sc_id, cg_GLOBAL, 0, true, Surge::ParamConfig::kHorizontal | sceasy));
 
-      a->push_back(scene[sc].lowcut.assign(p_id++, id_s++, "lowcut", "High Pass", ct_freq_hpf,
-                                           gui_envsec_x + gui_vfader_dist * 2 + 5, gui_envsec_y,
+      a->push_back(scene[sc].lowcut.assign(p_id.next(), id_s++, "lowcut", "Highpass", ct_freq_hpf,
+                                           "filter.highpass", gui_envsec_x + gui_vfader_dist * 2 + 5, gui_envsec_y,
                                            sc_id, cg_GLOBAL, 0, true, Surge::ParamConfig::kVertical | kWhite | sceasy));
 
-      a->push_back(scene[sc].wsunit.type.assign(p_id++, id_s++, "ws_type", "Waveshaper Type",
-                                                ct_wstype, gui_envsec_x + gui_vfader_dist * 4 - 1,
+      a->push_back(scene[sc].wsunit.type.assign(p_id.next(), id_s++, "ws_type", "Waveshaper Type",
+                                                ct_wstype,
+                                                "filter.waveshaper_type", gui_envsec_x + gui_vfader_dist * 4 - 1,
                                                 gui_envsec_y + 13, sc_id, cg_GLOBAL, 0, false,
                                                 kNoPopup));
       a->push_back(scene[sc].wsunit.drive.assign(
-          p_id++, id_s++, "ws_drive", "Waveshaper Drive", ct_decibel_narrow,
-          gui_envsec_x + gui_vfader_dist * 5 + 10, gui_envsec_y, sc_id, cg_GLOBAL, 0, true,
+          p_id.next(), id_s++, "ws_drive", "Waveshaper Drive", ct_decibel_narrow,
+          "filter.waveshaper_drive", gui_envsec_x + gui_vfader_dist * 5 + 10, gui_envsec_y, sc_id, cg_GLOBAL, 0, true,
           Surge::ParamConfig::kVertical | kWhite | sceasy));
 
       for (int f = 0; f < 2; f++)
@@ -369,27 +426,33 @@ SurgePatch::SurgePatch(SurgeStorage* storage)
          px = gui_col3_x + gui_sec_width * 2 * f;
          py = gui_mainsec_y;
 
-         a->push_back(scene[sc].filterunit[f].type.assign(p_id++, id_s++, "type", "Filter Type",
-                                                          ct_filtertype, px - 2, py + 1, sc_id,
+         a->push_back(scene[sc].filterunit[f].type.assign(p_id.next(), id_s++, "type", "Filter Type",
+                                                          ct_filtertype,
+                                                          "filter.type_" + std::to_string(f+1), px - 2, py + 1, sc_id,
                                                           cg_FILTER, f, false, Surge::ParamConfig::kHorizontal));
          a->push_back(scene[sc].filterunit[f].subtype.assign(
-             p_id++, id_s++, "subtype", "Filter Subtype", ct_filtersubtype, px - 3, py + 1, sc_id,
+             p_id.next(), id_s++, "subtype", "Filter Subtype", ct_filtersubtype,
+             "filter.subtype_" + std::to_string(f+1), px - 3, py + 1, sc_id,
              cg_FILTER, f, false, Surge::ParamConfig::kHorizontal));
          py = gui_mainsec_slider_y;
          a->push_back(scene[sc].filterunit[f].cutoff.assign(
-             p_id++, id_s++, "cutoff", "Cutoff", ct_freq_audible, px, py, sc_id, cg_FILTER, f, true,
+             p_id.next(), id_s++, "cutoff", "Cutoff", ct_freq_audible,
+             "filter.cutoff_" + std::to_string(f+1), px - (6 * f), py, sc_id, cg_FILTER, f, true,
              Surge::ParamConfig::kHorizontal | sceasy));
          if (f == 1)
             a->push_back(scene[sc].f2_cutoff_is_offset.assign(
-                p_id++, id_s++, "f2_cf_is_offset", "Is Offset to F1", ct_bool_relative_switch, px,
+                p_id.next(), id_s++, "f2_cf_is_offset", "F2 Offset Mode", ct_bool_relative_switch,
+                "filter.f2_offset_mode", px,
                 py, sc_id, cg_GLOBAL, 0, false, kMeta));
          py += gui_hfader_dist;
          a->push_back(scene[sc].filterunit[f].resonance.assign(
-             p_id++, id_s++, "resonance", "Resonance", ct_percent, px, py, sc_id, cg_FILTER, f,
+             p_id.next(), id_s++, "resonance", "Resonance", ct_percent,
+             "filter.resonance_" + std::to_string(f+1), px - (6 * f), py, sc_id, cg_FILTER, f,
              true, Surge::ParamConfig::kHorizontal | sceasy));
          if (f == 1)
             a->push_back(scene[sc].f2_link_resonance.assign(
-                p_id++, id_s++, "f2_link_resonance", "Link Resonance", ct_bool_link_switch, px, py,
+                p_id.next(), id_s++, "f2_link_resonance", "Link Resonance", ct_bool_link_switch,
+                "filter.f2_link_resonance", px, py,
                 sc_id, cg_GLOBAL, 0, false, kMeta));
 
          // py += gui_hfader_dist2;
@@ -397,51 +460,58 @@ SurgePatch::SurgePatch(SurgeStorage* storage)
          px = gui_envsec_x + gui_vfader_dist * (5 + f) - 10;
          py = gui_envsec_y;
          a->push_back(scene[sc].filterunit[f].envmod.assign(
-             p_id++, id_s++, "envmod", "Envmod", ct_freq_mod, px + gui_sec_width, py, sc_id,
+             p_id.next(), id_s++, "envmod", "FEG Mod Amount", ct_freq_mod,
+             "filter.envmod_" + std::to_string(f+1), px + gui_sec_width, py, sc_id,
              cg_FILTER, f, true, Surge::ParamConfig::kVertical | kWhite | sceasy));
          px += 3 * gui_vfader_dist - gui_sec_width;
          a->push_back(scene[sc].filterunit[f].keytrack.assign(
-             p_id++, id_s++, "keytrack", "Keytrack", ct_percent_bidirectional, px, py, sc_id,
+             p_id.next(), id_s++, "keytrack", "Keytrack", ct_percent_bidirectional,
+             "filter.keytrack_" + std::to_string(f+1), px, py, sc_id,
              cg_FILTER, f, true, Surge::ParamConfig::kVertical | kWhite));
       }
 
       // scene[sc].filterunit[0].type.val.i = 1;
       for (int e = 0; e < 2; e++)
       {
+         std::string envs = "FEG.";
+         if( e == 1 )
+            envs = "AEG.";
+         
          px = gui_envsec_x + gui_sec_width + (gui_sec_width) * (1 - e);
          py = gui_envsec_y;
          const int so = -30;
-         a->push_back(scene[sc].adsr[e].a.assign(p_id++, id_s++, "attack", "Attack", ct_envtime, px,
-                                                 py, sc_id, cg_ENV, e, true,
+         a->push_back(scene[sc].adsr[e].a.assign(p_id.next(), id_s++, "attack", "Attack", ct_envtime,
+                                                 envs + "attack", px, py, sc_id, cg_ENV, e, true,
                                                  Surge::ParamConfig::kVertical | kWhite | sceasy));
-         a->push_back(scene[sc].adsr[e].a_s.assign(p_id++, id_s++, "attack_shape", "Attack Shape",
-                                                   ct_envshape, px, py + so, sc_id, cg_ENV, e,
+         a->push_back(scene[sc].adsr[e].a_s.assign(p_id.next(), id_s++, "attack_shape", "Attack Shape",
+                                                   ct_envshape_attack,
+                                                   envs + "attack_shape", px, py + so, sc_id, cg_ENV, e,
                                                    false, kNoPopup));
          px += gui_vfader_dist;
 
-         a->push_back(scene[sc].adsr[e].d.assign(p_id++, id_s++, "decay", "Decay", ct_envtime, px,
-                                                 py, sc_id, cg_ENV, e, true,
+         a->push_back(scene[sc].adsr[e].d.assign(p_id.next(), id_s++, "decay", "Decay", ct_envtime,
+                                                 envs + "decay", px, py, sc_id, cg_ENV, e, true,
                                                  Surge::ParamConfig::kVertical | kWhite | sceasy));
-         a->push_back(scene[sc].adsr[e].d_s.assign(p_id++, id_s++, "decay_shape", "Decay Shape",
-                                                   ct_envshape, px, py + so, sc_id, cg_ENV, e,
+         a->push_back(scene[sc].adsr[e].d_s.assign(p_id.next(), id_s++, "decay_shape", "Decay Shape",
+                                                   ct_envshape, envs + "decay_shape", px, py + so, sc_id, cg_ENV, e,
                                                    false, kNoPopup));
          px += gui_vfader_dist;
 
-         a->push_back(scene[sc].adsr[e].s.assign(p_id++, id_s++, "sustain", "Sustain", ct_percent,
-                                                 px, py, sc_id, cg_ENV, e, true,
+         a->push_back(scene[sc].adsr[e].s.assign(p_id.next(), id_s++, "sustain", "Sustain", ct_percent,
+                                                 envs + "sustain", px, py, sc_id, cg_ENV, e, true,
                                                  Surge::ParamConfig::kVertical | kWhite | sceasy));
          px += gui_vfader_dist;
 
-         a->push_back(scene[sc].adsr[e].r.assign(p_id++, id_s++, "release", "Release", ct_envtime,
-                                                 px, py, sc_id, cg_ENV, e, true,
+         a->push_back(scene[sc].adsr[e].r.assign(p_id.next(), id_s++, "release", "Release", ct_envtime,
+                                                 envs + "release", px, py, sc_id, cg_ENV, e, true,
                                                  Surge::ParamConfig::kVertical | kWhite | sceasy));
-         a->push_back(scene[sc].adsr[e].r_s.assign(p_id++, id_s++, "release_shape", "Release Shape",
-                                                   ct_envshape, px, py + so, sc_id, cg_ENV, e,
+         a->push_back(scene[sc].adsr[e].r_s.assign(p_id.next(), id_s++, "release_shape", "Release Shape",
+                                                   ct_envshape, envs + "release_shape",  px, py + so, sc_id, cg_ENV, e,
                                                    false, kNoPopup));
          px += gui_vfader_dist;
 
-         a->push_back(scene[sc].adsr[e].mode.assign(p_id++, id_s++, "mode", "Mode", ct_envmode,
-                                                    px + 13, py - 31, sc_id, cg_ENV, e, false,
+         a->push_back(scene[sc].adsr[e].mode.assign(p_id.next(), id_s++, "mode", "Envelope Mode", ct_envmode,
+                                                    envs + "mode", px + 13, py - 31, sc_id, cg_ENV, e, false,
                                                     kNoPopup));
       }
 
@@ -452,86 +522,106 @@ SurgePatch::SurgePatch(SurgeStorage* storage)
          char label[32];
 
          sprintf(label, "lfo%i_shape", l);
-         a->push_back(scene[sc].lfo[l].shape.assign(p_id++, id_s++, label, "Shape", ct_lfoshape, px,
-                                                    py, sc_id, cg_LFO, ms_lfo1 + l, true,
+         a->push_back(scene[sc].lfo[l].shape.assign(p_id.next(), id_s++, label, "Shape", ct_lfoshape,
+                                                    "lfo.shape", px, py, sc_id, cg_LFO, ms_lfo1 + l, true,
                                                     Surge::ParamConfig::kHorizontal));
 
          px = gui_modsec_x;
          py = gui_modsec_y - 10;
 
          sprintf(label, "lfo%i_rate", l);
-         a->push_back(scene[sc].lfo[l].rate.assign(p_id++, id_s++, label, "Rate", ct_lforate, px,
-                                                   py, sc_id, cg_LFO, ms_lfo1 + l, true,
-                                                   Surge::ParamConfig::kHorizontal | sceasy));
+         a->push_back(scene[sc].lfo[l].rate.assign(p_id.next(), id_s++, label, "Rate", ct_lforate_deactivatable,
+                                                   "lfo.rate", px, py, sc_id, cg_LFO, ms_lfo1 + l, true,
+                                                   Surge::ParamConfig::kHorizontal | sceasy, false));
          py += gui_hfader_dist;
          sprintf(label, "lfo%i_phase", l);
-         a->push_back(scene[sc].lfo[l].start_phase.assign(p_id++, id_s++, label, "Phase / Shuffle",
-                                                          ct_percent, px, py, sc_id, cg_LFO,
+         a->push_back(scene[sc].lfo[l].start_phase.assign(p_id.next(), id_s++, label, "Phase / Shuffle",
+                                                          ct_percent,
+                                                          "lfo.phase", px, py,
+                                                          sc_id, cg_LFO,
                                                           ms_lfo1 + l, true, Surge::ParamConfig::kHorizontal));
          py += gui_hfader_dist;
          sprintf(label, "lfo%i_magnitude", l);
-         a->push_back(scene[sc].lfo[l].magnitude.assign(p_id++, id_s++, label, "Magnitude",
-                                                        ct_percent, px, py, sc_id, cg_LFO,
+         a->push_back(scene[sc].lfo[l].magnitude.assign(p_id.next(), id_s++, label, "Amplitude",
+                                                        ct_percent,
+                                                        "lfo.amplitude", px, py, sc_id, cg_LFO,
                                                         ms_lfo1 + l, true, Surge::ParamConfig::kHorizontal | sceasy));
          py += gui_hfader_dist;
          sprintf(label, "lfo%i_deform", l);
-         a->push_back(scene[sc].lfo[l].deform.assign(p_id++, id_s++, label, "Deform",
-                                                     ct_percent_bidirectional, px, py, sc_id,
+         a->push_back(scene[sc].lfo[l].deform.assign(p_id.next(), id_s++, label, "Deform",
+                                                     ct_percent_bidirectional, "lfo.deform", px, py, sc_id,
                                                      cg_LFO, ms_lfo1 + l, true, Surge::ParamConfig::kHorizontal));
 
          px += gui_sec_width;
          py = gui_modsec_y;
          sprintf(label, "lfo%i_trigmode", l);
-         a->push_back(scene[sc].lfo[l].trigmode.assign(p_id++, id_s++, label, "Trigger Mode",
-                                                       ct_lfotrigmode, px + 5, py - 4, sc_id,
+         a->push_back(scene[sc].lfo[l].trigmode.assign(p_id.next(), id_s++, label, "Trigger Mode",
+                                                       ct_lfotrigmode, "lfo.triggermode", px + 5, py - 4, sc_id,
                                                        cg_LFO, ms_lfo1 + l, false, kNoPopup));
          py += 44;
          sprintf(label, "lfo%i_unipolar", l);
-         a->push_back(scene[sc].lfo[l].unipolar.assign(p_id++, id_s++, label, "Unipolar",
-                                                       ct_bool_unipolar, px + 5, py - 4, sc_id,
+         a->push_back(scene[sc].lfo[l].unipolar.assign(p_id.next(), id_s++, label, "Unipolar",
+                                                       ct_bool_unipolar, "lfo.unipolar", px + 5, py - 4, sc_id,
                                                        cg_LFO, ms_lfo1 + l, false));
 
          px += 3 * gui_sec_width + 8;
          py = gui_modsec_y + 5;
          sprintf(label, "lfo%i_delay", l);
-         a->push_back(scene[sc].lfo[l].delay.assign(p_id++, id_s++, label, "Delay", ct_envtime, px,
+         a->push_back(scene[sc].lfo[l].delay.assign(p_id.next(), id_s++, label, "Delay", ct_envtime, "lfo.delay", px,
                                                     py, sc_id, cg_LFO, ms_lfo1 + l, true,
                                                     Surge::ParamConfig::kVertical | kMini));
          px += gui_vfader_dist;
          sprintf(label, "lfo%i_attack", l);
-         a->push_back(scene[sc].lfo[l].attack.assign(p_id++, id_s++, label, "Attack", ct_envtime,
-                                                     px, py, sc_id, cg_LFO, ms_lfo1 + l, true,
+         a->push_back(scene[sc].lfo[l].attack.assign(p_id.next(), id_s++, label, "Attack", ct_envtime,
+                                                     "lfo.attack", px, py, sc_id, cg_LFO, ms_lfo1 + l, true,
                                                      Surge::ParamConfig::kVertical | kMini));
          px += gui_vfader_dist;
          sprintf(label, "lfo%i_hold", l);
-         a->push_back(scene[sc].lfo[l].hold.assign(p_id++, id_s++, label, "Hold", ct_envtime, px,
+         a->push_back(scene[sc].lfo[l].hold.assign(p_id.next(), id_s++, label, "Hold", ct_envtime, "lfo.hold", px,
                                                    py, sc_id, cg_LFO, ms_lfo1 + l, true,
                                                    Surge::ParamConfig::kVertical | kMini));
          px += gui_vfader_dist;
          sprintf(label, "lfo%i_decay", l);
-         a->push_back(scene[sc].lfo[l].decay.assign(p_id++, id_s++, label, "Decay", ct_envtime, px,
+         a->push_back(scene[sc].lfo[l].decay.assign(p_id.next(), id_s++, label, "Decay", ct_envtime, "lfo.decay", px,
                                                     py, sc_id, cg_LFO, ms_lfo1 + l, true,
                                                     Surge::ParamConfig::kVertical | kMini));
          px += gui_vfader_dist;
          sprintf(label, "lfo%i_sustain", l);
-         a->push_back(scene[sc].lfo[l].sustain.assign(p_id++, id_s++, label, "Sustain", ct_percent,
-                                                      px, py, sc_id, cg_LFO, ms_lfo1 + l, true,
+         a->push_back(scene[sc].lfo[l].sustain.assign(p_id.next(), id_s++, label, "Sustain", ct_percent,
+                                                      "lfo.sustain", px, py, sc_id, cg_LFO, ms_lfo1 + l, true,
                                                       Surge::ParamConfig::kVertical | kMini));
          px += gui_vfader_dist;
          sprintf(label, "lfo%i_release", l);
-         a->push_back(scene[sc].lfo[l].release.assign(p_id++, id_s++, label, "Release",
-                                                      ct_envtime_lfodecay, px, py, sc_id, cg_LFO,
+         a->push_back(scene[sc].lfo[l].release.assign(p_id.next(), id_s++, label, "Release",
+                                                      ct_envtime_lfodecay, "lfo.release", px, py, sc_id, cg_LFO,
                                                       ms_lfo1 + l, true, Surge::ParamConfig::kVertical | kMini));
          px += gui_vfader_dist;
       }
    }
 
-   param_ptr.push_back(character.assign(p_id++, 0, "character", "Character", ct_character, 607,
+   param_ptr.push_back(character.assign(p_id.next(), 0, "character", "Character", ct_character, "global.character", 607,
                                         gui_mid_topbar_y + 24, 0, cg_GLOBAL, 0, false, kNoPopup));
+
+   // Resolve the promise chain
+   p_id.resolve();
+   for (unsigned int i = 0; i < param_ptr.size(); i++)
+   {
+      param_ptr[i]->id = param_ptr[i]->id_promise->value;
+      param_ptr[i]->id_promise = nullptr; // we only hold it transiently since we have a direct pointer copy to keep the class size fixed
+
+      /*
+      ** Give the param a weak pointer to the storage, since we know this patch will last the
+      ** lifetime of the storage which created it. See comment in Parameter.h
+      */
+      param_ptr[i]->storage = storage;
+   }
+
+   scene_start[0] = scene_start_promise[0]->value;
+   scene_start[1] = scene_start_promise[1]->value;
 
    scene_size = scene_start[1] - scene_start[0];
    assert(scene_size == n_scene_params);
-   assert(globparams == n_global_params);
+   assert(globparams_promise->value == n_global_params);
    init_default_values();
    update_controls(true);
 
@@ -622,6 +712,7 @@ void SurgePatch::init_default_values()
 
       for (int l = 0; l < n_lfos; l++)
       {
+         scene[sc].lfo[l].rate.deactivated = false;
          scene[sc].lfo[l].magnitude.val.f = 1.f;
          scene[sc].lfo[l].magnitude.val_default.f = 1.f;
          scene[sc].lfo[l].trigmode.val.i = 1;
@@ -700,6 +791,7 @@ void SurgePatch::update_controls(bool init,
                                  bool from_streaming // we are loading from a patch
     ) 
 {
+   int sn = 0;
    for (auto& sc : scene)
    {
       for (int osc = 0; osc < n_oscs; osc++)
@@ -710,7 +802,7 @@ void SurgePatch::update_controls(bool init,
          Oscillator* t_osc = spawn_osc(sc.osc[osc].type.val.i, nullptr, &sc.osc[osc], nullptr);
          if (t_osc)
          {
-            t_osc->init_ctrltypes();
+            t_osc->init_ctrltypes(sn,osc);
             if (from_streaming)
                 t_osc->handleStreamingMismatches( streamingRevision, currentSynthStreamingRevision );
             if (init || (init_osc == &sc.osc[osc]))
@@ -720,6 +812,7 @@ void SurgePatch::update_controls(bool init,
             delete t_osc;
          }
       }
+      sn++;
    }
 
    if( from_streaming )
@@ -881,6 +974,17 @@ void SurgePatch::load_patch(const void* data, int datasize, bool preset)
 
                storage->CS_WaveTableData.enter();
                scene[sc].osc[osc].wt.BuildWT(d, *wth, false);
+               if( scene[sc].osc[osc].wavetable_display_name[0] == '\0' )
+               {
+                  if (scene[sc].osc[osc].wt.flags & wtf_is_sample)
+                  {
+                     strncpy(scene[sc].osc[osc].wavetable_display_name, "(Patch Sample)", 256);
+                  }
+                  else
+                  {
+                     strncpy(scene[sc].osc[osc].wavetable_display_name, "(Patch Wavetable)", 256);
+                  }
+               }
                storage->CS_WaveTableData.leave();
 
                dr += ph->wtsize[sc][osc];
@@ -1073,6 +1177,7 @@ void SurgePatch::load_xml(const void* data, int datasize, bool is_preset)
          int type;
          if (!(p->QueryIntAttribute("type", &type) == TIXML_SUCCESS))
             type = param_ptr[i]->valtype;
+
          if (type == (valtypes)vt_float)
          {
             if (p->QueryDoubleAttribute("value", &d) == TIXML_SUCCESS)
@@ -1092,10 +1197,86 @@ void SurgePatch::load_xml(const void* data, int datasize, bool is_preset)
             param_ptr[i]->temposync = true;
          else
             param_ptr[i]->temposync = false;
+
+         if ((p->QueryIntAttribute("porta_const_rate", &j) == TIXML_SUCCESS))
+         {
+            if (j == 1)
+               param_ptr[i]->porta_constrate = true;
+            else
+               param_ptr[i]->porta_constrate = false;
+         }
+         else
+         {
+            if (param_ptr[i]->has_portaoptions())
+               param_ptr[i]->porta_constrate = false;
+         }
+
+         if ((p->QueryIntAttribute("porta_gliss", &j) == TIXML_SUCCESS))
+         {
+            if (j == 1)
+               param_ptr[i]->porta_gliss = true;
+            else
+               param_ptr[i]->porta_gliss = false;
+         }
+         else
+         {
+            if (param_ptr[i]->has_portaoptions())
+               param_ptr[i]->porta_gliss = false;
+         }
+
+         if ((p->QueryIntAttribute("porta_retrigger", &j) == TIXML_SUCCESS))
+         {
+            if (j == 1)
+               param_ptr[i]->porta_retrigger = true;
+            else
+               param_ptr[i]->porta_retrigger = false;
+         }
+         else
+         {
+            if (param_ptr[i]->has_portaoptions())
+               param_ptr[i]->porta_retrigger = false;
+         }
+
+         if ((p->QueryIntAttribute("porta_curve", &j) == TIXML_SUCCESS))
+         {
+            switch (j)
+            {
+            case porta_log:
+            case porta_lin:
+            case porta_exp:
+               param_ptr[i]->porta_curve = j;
+               break;
+            }
+         }
+         else
+         {
+            if (param_ptr[i]->has_portaoptions())
+               param_ptr[i]->porta_curve = porta_lin;
+         }
+
+         if ((p->QueryIntAttribute("deactivated", &j) == TIXML_SUCCESS))
+         {
+            if(j == 1)
+               param_ptr[i]->deactivated = true;
+            else
+               param_ptr[i]->deactivated = false;
+         }
+         else
+         {
+            if( param_ptr[i]->can_deactivate() )
+            {
+               if( param_ptr[i]->ctrlgroup == cg_LFO ) // this is the "RATE" special case
+                  param_ptr[i]->deactivated = false;
+               else
+                  param_ptr[i]->deactivated = true;
+            }
+         }
+
          if ((p->QueryIntAttribute("extend_range", &j) == TIXML_SUCCESS) && (j == 1))
             param_ptr[i]->extend_range = true;
          else
             param_ptr[i]->extend_range = false;
+
          if ((p->QueryIntAttribute("absolute", &j) == TIXML_SUCCESS) && (j == 1))
             param_ptr[i]->absolute = true;
          else
@@ -1299,6 +1480,42 @@ void SurgePatch::load_xml(const void* data, int datasize, bool is_preset)
       }
    }
 
+   /*
+   ** extra osc data handling
+   */
+
+   // Blank out the display names
+   for (int sc = 0; sc < 2; sc++)
+   {
+      for (int osc = 0; osc < n_oscs; osc++)
+      {
+         scene[sc].osc[osc].wavetable_display_name[0] = '\0';
+      }
+   }
+
+   TiXmlElement* eod = TINYXML_SAFE_TO_ELEMENT(patch->FirstChild("extraoscdata"));
+   if (eod)
+   {
+      for( auto child = eod->FirstChild(); child; child = child->NextSibling() )
+      {
+         auto *lkid = TINYXML_SAFE_TO_ELEMENT(child);
+         if( lkid &&
+             lkid->Attribute( "osc" ) &&
+             lkid->Attribute( "scene" ) )
+         {
+            int sos = std::atoi( lkid->Attribute("osc") );
+            int ssc = std::atoi( lkid->Attribute("scene") );
+
+            if( lkid->Attribute( "wavetable_display_name" ) )
+            {
+               strncpy( scene[ssc].osc[sos].wavetable_display_name, lkid->Attribute( "wavetable_display_name" ), 256 );
+            }
+         }
+      }
+      
+   }
+  
+
    // reset stepsequences first
    for (auto& stepsequence : stepsequences)
       for (auto& l : stepsequence)
@@ -1332,6 +1549,27 @@ void SurgePatch::load_xml(const void* data, int datasize, bool is_preset)
          if (p->QueryIntAttribute("trigmask", &j) == TIXML_SUCCESS)
             stepsequences[sc][lfo].trigmask = j;
 
+         if (p->QueryIntAttribute("trigmask_0to15", &j ) == TIXML_SUCCESS )
+         {
+            stepsequences[sc][lfo].trigmask &= 0xFFFFFFFFFFFF0000;
+            j &= 0xFFFF;
+            stepsequences[sc][lfo].trigmask |= j;
+         };
+         if (p->QueryIntAttribute("trigmask_16to31", &j ) == TIXML_SUCCESS )
+         {
+            stepsequences[sc][lfo].trigmask &= 0xFFFFFFFF0000FFFF;
+            j &= 0xFFFF;
+            uint64_t jl = (uint64_t)j;
+            stepsequences[sc][lfo].trigmask |= jl << 16;
+         };
+         if (p->QueryIntAttribute("trigmask_32to47", &j ) == TIXML_SUCCESS )
+         {
+            stepsequences[sc][lfo].trigmask &= 0xFFFF0000FFFFFFFF;
+            j &= 0xFFFF;
+            uint64_t jl = (uint64_t)j;
+            stepsequences[sc][lfo].trigmask |= jl << 32;
+         };
+         
          for (int s = 0; s < n_stepseqsteps; s++)
          {
             char txt[256];
@@ -1378,6 +1616,9 @@ void SurgePatch::load_xml(const void* data, int datasize, bool is_preset)
    }
 
    patchTuning.tuningStoredInPatch = false;
+   patchTuning.tuningContents = "";
+   patchTuning.mappingContents = "";
+
    TiXmlElement *pt = TINYXML_SAFE_TO_ELEMENT(patch->FirstChild("patchTuning"));
    if( pt )
    {
@@ -1388,6 +1629,14 @@ void SurgePatch::load_xml(const void* data, int datasize, bool is_preset)
            patchTuning.tuningStoredInPatch = true;
            auto tc = base64_decode(td);
            patchTuning.tuningContents = tc;
+       }
+
+       if( pt &&
+           (td = pt->Attribute("m") ))
+       {
+           patchTuning.tuningStoredInPatch = true;
+           auto tc = base64_decode(td);
+           patchTuning.mappingContents = tc;
        }
    }
    
@@ -1415,6 +1664,12 @@ void SurgePatch::load_xml(const void* data, int datasize, bool is_preset)
                p->QueryIntAttribute("v",&ival) == TIXML_SUCCESS)
                dawExtraState.mpeEnabled = ival;
 
+           p = TINYXML_SAFE_TO_ELEMENT(de->FirstChild("mpePitchBendRange"));
+           if( p &&
+               p->QueryIntAttribute("v",&ival) == TIXML_SUCCESS)
+               dawExtraState.mpePitchBendRange = ival;
+
+
            p = TINYXML_SAFE_TO_ELEMENT(de->FirstChild("hasTuning"));
            if( p &&
                p->QueryIntAttribute("v",&ival) == TIXML_SUCCESS)
@@ -1432,6 +1687,54 @@ void SurgePatch::load_xml(const void* data, int datasize, bool is_preset)
                    auto tc = base64_decode(td);
                    dawExtraState.tuningContents = tc;
                }
+           }
+
+           p = TINYXML_SAFE_TO_ELEMENT(de->FirstChild("hasMapping"));
+           if( p &&
+               p->QueryIntAttribute("v",&ival) == TIXML_SUCCESS)
+           {
+               dawExtraState.hasMapping = (ival != 0);
+           }
+
+           if( dawExtraState.hasMapping )
+           {
+               p = TINYXML_SAFE_TO_ELEMENT(de->FirstChild("mappingContents"));
+               if( p &&
+                   (td = p->Attribute("v") ))
+               {
+                   auto tc = base64_decode(td);
+                   dawExtraState.mappingContents = tc;
+               }
+           }
+
+           p = TINYXML_SAFE_TO_ELEMENT(de->FirstChild("midictrl_map"));
+           if( p )
+           {
+              auto c = TINYXML_SAFE_TO_ELEMENT(p->FirstChild( "c" ) );
+              while( c )
+              {
+                 int p, v;
+                 if( c->QueryIntAttribute( "p", &p ) == TIXML_SUCCESS &&
+                     c->QueryIntAttribute( "v", &v ) == TIXML_SUCCESS )
+                 {
+                    dawExtraState.midictrl_map[p] = v;
+                 }
+                 c = TINYXML_SAFE_TO_ELEMENT(c->NextSibling( "c" ) );
+              }
+           }
+
+           p = TINYXML_SAFE_TO_ELEMENT(de->FirstChild("customcontrol_map"));
+           if( p )
+           {
+              auto c = TINYXML_SAFE_TO_ELEMENT(p->FirstChild( "c" ) );
+              while( c )
+              {
+                 int p, v;
+                 if( c->QueryIntAttribute( "p", &p ) == TIXML_SUCCESS &&
+                     c->QueryIntAttribute( "v", &v ) == TIXML_SUCCESS )
+                    dawExtraState.customcontrol_map[p] = v;
+                 c = TINYXML_SAFE_TO_ELEMENT(c->NextSibling( "c" ) );
+              }
            }
 
        }
@@ -1550,6 +1853,15 @@ unsigned int SurgePatch::save_xml(void** data) // allocates mem, must be freed b
             p.SetAttribute("extend_range", "1");
          if (param_ptr[i]->absolute)
             p.SetAttribute("absolute", "1");
+         if (param_ptr[i]->can_deactivate())
+            p.SetAttribute("deactivated", param_ptr[i]->deactivated ? "1" : "0" );
+         if (param_ptr[i]->has_portaoptions())
+         {
+            p.SetAttribute("porta_const_rate", param_ptr[i]->porta_constrate ? "1" : "0");
+            p.SetAttribute("porta_gliss", param_ptr[i]->porta_gliss ? "1" : "0");
+            p.SetAttribute("porta_retrigger", param_ptr[i]->porta_retrigger ? "1" : "0");
+            p.SetAttribute("porta_curve", param_ptr[i]->porta_curve);
+         }
 
          // param_ptr[i]->val.i;
          parameters.InsertEndChild(p);
@@ -1557,6 +1869,25 @@ unsigned int SurgePatch::save_xml(void** data) // allocates mem, must be freed b
    }
    patch.InsertEndChild(parameters);
 
+   TiXmlElement eod( "extraoscdata" );
+   for( int sc=0; sc<2; ++sc )
+   {
+      for( int os=0; os<n_oscs; ++os )
+      {
+         std::string streaming_name = "osc_extra_sc" + std::to_string(sc) + "_osc" + std::to_string(os);
+         if( uses_wavetabledata(scene[sc].osc[os].type.val.i) )
+         {
+            TiXmlElement on(streaming_name.c_str());
+            on.SetAttribute("wavetable_display_name", scene[sc].osc[os].wavetable_display_name );
+            on.SetAttribute("scene", sc );
+            on.SetAttribute("osc", os );
+            eod.InsertEndChild(on);
+         }
+      }
+   }
+   patch.InsertEndChild(eod);
+     
+   
    TiXmlElement ss("stepsequences");
    for (int sc = 0; sc < 2; sc++)
    {
@@ -1579,8 +1910,21 @@ unsigned int SurgePatch::save_xml(void** data) // allocates mem, must be freed b
             p.SetAttribute("loop_start", stepsequences[sc][l].loop_start);
             p.SetAttribute("loop_end", stepsequences[sc][l].loop_end);
             p.SetAttribute("shuffle", float_to_str(stepsequences[sc][l].shuffle, txt2));
-            if (l == 0)
-               p.SetAttribute("trigmask", stepsequences[sc][l].trigmask);
+            if (l < n_lfos_voice )
+            {
+               uint64_t ttm = stepsequences[sc][l].trigmask;
+
+               // collapse in case an old surge loads this
+               uint64_t old_ttm = ( ttm & 0xFFFF ) | ( ( ttm >> 16 ) & 0xFFFF ) | ( ( ttm >> 32 ) & 0xFFFF );
+               
+               p.SetAttribute("trigmask", old_ttm);
+
+               p.SetAttribute("trigmask_0to15", ttm & 0xFFFF );
+               ttm = ttm >> 16;
+               p.SetAttribute("trigmask_16to31", ttm & 0xFFFF );
+               ttm = ttm >> 16;
+               p.SetAttribute("trigmask_32to47", ttm & 0xFFFF );
+            }
             ss.InsertEndChild(p);
          }
       }
@@ -1620,6 +1964,9 @@ unsigned int SurgePatch::save_xml(void** data) // allocates mem, must be freed b
        TiXmlElement pt( "patchTuning" );
        pt.SetAttribute("v", base64_encode( (unsigned const char *)patchTuning.tuningContents.c_str(),
                                             patchTuning.tuningContents.size() ).c_str() );
+       if( patchTuning.mappingContents.size() > 0 )
+          pt.SetAttribute("m", base64_encode( (unsigned const char *)patchTuning.mappingContents.c_str(),
+                                              patchTuning.mappingContents.size() ).c_str() );
        
        patch.InsertEndChild(pt);
    }
@@ -1637,6 +1984,10 @@ unsigned int SurgePatch::save_xml(void** data) // allocates mem, must be freed b
        mpe.SetAttribute("v", dawExtraState.mpeEnabled ? 1 : 0 );
        dawExtraXML.InsertEndChild(mpe);
 
+       TiXmlElement mppb("mpePitchBendRange");
+       mppb.SetAttribute("v", dawExtraState.mpePitchBendRange );
+       dawExtraXML.InsertEndChild(mppb);
+
        TiXmlElement tun("hasTuning");
        tun.SetAttribute("v", dawExtraState.hasTuning ? 1 : 0 );
        dawExtraXML.InsertEndChild(tun);
@@ -1650,6 +2001,43 @@ unsigned int SurgePatch::save_xml(void** data) // allocates mem, must be freed b
        tnc.SetAttribute("v", base64_encode( (unsigned const char *)dawExtraState.tuningContents.c_str(),
                                             dawExtraState.tuningContents.size() ).c_str() );
        dawExtraXML.InsertEndChild(tnc);
+
+       TiXmlElement hmp("hasMapping");
+       hmp.SetAttribute("v", dawExtraState.hasMapping ? 1 : 0 );
+       dawExtraXML.InsertEndChild(hmp);
+
+       /*
+       ** we really want a cdata here but TIXML is ambiguous whether
+       ** it does the right thing when I read the code, and is kinda crufty
+       ** so just protect ourselves with a base 64 encoding.
+       */
+       TiXmlElement mpc("mappingContents");
+       mpc.SetAttribute("v", base64_encode( (unsigned const char *)dawExtraState.mappingContents.c_str(),
+                                            dawExtraState.mappingContents.size() ).c_str() );
+       dawExtraXML.InsertEndChild(mpc);
+
+       /*
+       ** Add the midi controls
+       */
+       TiXmlElement mcm("midictrl_map");
+       for( auto &p : dawExtraState.midictrl_map )
+       {
+          TiXmlElement c("c");
+          c.SetAttribute( "p", p.first );
+          c.SetAttribute( "v", p.second );
+          mcm.InsertEndChild(c);
+       }
+       dawExtraXML.InsertEndChild(mcm);
+       
+       TiXmlElement ccm("customcontrol_map");
+       for( auto &p : dawExtraState.customcontrol_map )
+       {
+          TiXmlElement c("c");
+          c.SetAttribute( "p", p.first );
+          c.SetAttribute( "v", p.second );
+          ccm.InsertEndChild(c);
+       }
+       dawExtraXML.InsertEndChild(ccm);
    }
    patch.InsertEndChild(dawExtraXML);
    

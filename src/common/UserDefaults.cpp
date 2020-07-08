@@ -9,15 +9,7 @@
 #include <sstream>
 #include <fstream>
 
-#if LINUX
-#include <experimental/filesystem>
-#elif MAC || TARGET_RACK
-#include <filesystem.h>
-#else
-#include <filesystem>
-#endif
-
-namespace fs = std::experimental::filesystem;
+#include "ImportFilesystem.h"
 
 namespace Surge
 {

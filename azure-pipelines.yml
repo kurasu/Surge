@@ -2,30 +2,51 @@
 # https://aka.ms/yaml
 
 trigger:
-- master
+- main
 - release/*
 
 pr:
-- master
+- main
 
 jobs:
 - job: Build
   strategy:
     matrix:
-      mac:
-        imageName: 'macos-10.13'
+      macOS:
+        imageName: 'macos-10.14'
         isMac: True
-      windows:
+      windows-x64-plugins:
         imageName: 'vs2017-win2016'
         isWindows: True
         is64Bit: True
-      windows-x86:
+      windows-x64-vs2019:
+        imageName: 'windows-2019'
+        isWindows: True
+        is64Bit: True
+      windows-x86-plugins:
         imageName: 'vs2017-win2016'
         isWindows: True
         is32Bit: True
-      linux:
+      windows-unittest:
+        imageName: 'vs2017-win2016'
+        isWindowsUnitTest: True
+      linux-lv2:
+        imageName: 'ubuntu-18.04'
+        isLinux: True
+        linuxProject: lv2
+      linux-vst3:
+        imageName: 'ubuntu-18.04'
+        isLinux: True
+        linuxProject: vst3
+      linux-vst3-ubuntu-16:
         imageName: 'ubuntu-16.04'
         isLinux: True
+        linuxProject: vst3
+      linux-unittest:
+        imageName: 'ubuntu-18.04'
+        isLinux: True
+        linuxProject: headless
+        runHeadless: True
 
   pool:
     vmImage: $(imageName)
@@ -38,7 +59,7 @@ jobs:
   - bash: |
      echo "BUILD REASON = " $BUILD_REASON
      echo "MAKE ASSETS = " $MAKEASSETS     
-    displayName: Details on build
+    displayName: all - details on build
     
   - bash: |
       # do this here, because we're using a shallow clone and it fails using `submodules: recursive` above
@@ -47,39 +68,40 @@ jobs:
       export SURGE_VERSION=$(cat VERSION)
       echo "SURGE_VERSION=$SURGE_VERSION"
       echo "##vso[task.setvariable variable=SURGE_VERSION]$SURGE_VERSION"
-    displayName: Submodule init
+    displayName: all - submodule init
 
   - bash: |
-      pushd $AGENT_TEMPDIRECTORY
-      export PREMAKE_MAC=https://github.com/premake/premake-core/releases/download/v5.0.0-alpha13/premake-5.0.0-alpha13-macosx.tar.gz
-      curl -L $PREMAKE_MAC --output premake5.tar.gz
-      tar zxvf premake5.tar.gz
-      popd
-
-      export PATH=$AGENT_TEMPDIRECTORY:$PATH
       ./build-osx.sh --build --verbose
-      ls -alFh target
-      ls -alFh products
-    condition: variables.isMac
-    displayName: Build macOS releases
 
-  - task: NuGetToolInstaller@0
-    condition: variables.isWindows
-    displayName: NuGet
+    condition: variables.isMac
+    displayName: macOS - build all assets
 
   - bash: |
-      pushd $AGENT_TEMPDIRECTORY
-      export PREMAKE_WINDOWS=https://github.com/premake/premake-core/releases/download/v5.0.0-alpha13/premake-5.0.0-alpha13-windows.zip
-      curl -L $PREMAKE_WINDOWS --output premake5.zip
-      unzip premake5.zip
-      popd
-
       export PATH=$AGENT_TEMPDIRECTORY:$PATH
-      premake5 vs2017
+      
+      mkdir "$HOME/Library/Application Support/Surge"
+      rsync -r --delete "resources/data/" "$HOME/Library/Application Support/Surge/"
+      
+      ./build-osx.sh --build-headless
+      ./build/Release/surge-headless
+    condition: variables.isMac
+    displayName: macOS - run unit tests
+
+  - bash: |
+      mkdir -p build
+      cmake -Bbuild -A x64
       ls -alFh
 
-    condition: variables.isWindows
-    displayName: Setup Windows Project
+    condition: and(variables.isWindows,variables.is64Bit)
+    displayName: windows - setup 64bit build for plugins
+
+  - bash: |
+      mkdir -p build
+      cmake -Bbuild -A Win32
+      ls -alFh
+
+    condition: and(variables.isWindows,variables.is32Bit)
+    displayName: windows - setup 32 bit build for plugins
 
   - task: MSBuild@1
     inputs:
@@ -87,7 +109,7 @@ jobs:
       maximumCpuCount: true
       platform: 'x64'
     condition: and(variables.isWindows,variables.is64Bit)
-    displayName: Build Windows x64
+    displayName: windows - build x64 plugins
 
   - task: MSBuild@1
     inputs:
@@ -95,16 +117,41 @@ jobs:
       maximumCpuCount: true
       platform: 'Win32'
     condition: and(variables.isWindows,variables.is32Bit)
-    displayName: Build Windows x86
+    displayName: windows - build x86 plugins
 
-  - bash: |
-      pushd $AGENT_TEMPDIRECTORY
-      export PREMAKE_LINUX=https://github.com/premake/premake-core/releases/download/v5.0.0-alpha13/premake-5.0.0-alpha13-linux.tar.gz
-      curl -L $PREMAKE_LINUX --output premake5.tar.gz
-      tar zxvf premake5.tar.gz
-      export PATH=$AGENT_TEMPDIRECTORY:$PATH
+# https://github.com/Microsoft/azure-pipelines-tasks/issues/9737
+  - script: |
+      pushd "C:\Program Files (x86)\Microsoft Visual Studio\Installer\"
+      for /f "delims=" %%x in ('.\vswhere.exe -latest -property InstallationPath') do set VSPATH=%%x
       popd
 
+      call "%VSPATH%\VC\Auxiliary\Build\vcvarsall.bat" x64
+      cmake -S . -B build  -G "Visual Studio 15 2017 Win64"
+    condition: variables.isWindowsUnitTest
+    displayName: windows - run cmake
+
+  - task: MSBuild@1
+    inputs:
+      solution: 'build\surge-headless.vcxproj'
+      maximumCpuCount: true
+      platform: 'x64'
+      msbuildVersion: '15.0'
+      configuration: 'Release'
+    condition: variables.isWindowsUnitTest
+    displayName: windows - build unit tests
+
+  - bash: | 
+      mkdir -p "${LOCALAPPDATA}/Surge/"
+      cd resources/data && tar cf - . | ( cd ${LOCALAPPDATA}/Surge && tar xf - ) && cd ../..
+
+      ls -l "${LOCALAPPDATA}/Surge/"
+      
+      build/Release/surge-headless.exe
+
+    condition: variables.isWindowsUnitTest
+    displayName: windows - run unit tests
+
+  - bash: |
       sudo apt-get install -y xcb
       sudo apt-get install -y libxcb-util-dev
       sudo apt-get install -y libxcb-cursor-dev
@@ -113,10 +160,25 @@ jobs:
       sudo apt-get install -y libxkbcommon-x11-dev
       sudo apt-get install -y devscripts
 
-      ./build-linux.sh clean && ./build-linux.sh build
+      echo "Building $(linuxProject)"
+      ./build-linux.sh clean && ./build-linux.sh build --project=$(linuxProject)
 
     condition: variables.isLinux
-    displayName: Build Linux
+    displayName: linux - build plugin
+
+  - bash: |
+      export PATH=$AGENT_TEMPDIRECTORY:$PATH
+
+      echo "Running HeadlessTest $(linuxProject)"
+      export XDG_DATA_HOME=$AGENT_TEMPDIRECTORY/XH
+      mkdir -p $XDG_DATA_HOME
+      rsync -r --delete "resources/data/" "$XDG_DATA_HOME/surge/"
+
+      ./buildlin/surge-headless
+
+
+    condition: and(variables.isLinux,variables.runHeadless)
+    displayName: linux - build and run unit test
 
 
 - job: NotifyReleases
@@ -135,7 +197,7 @@ jobs:
 
       # remove refs/heads/
       export BRANCH="${BUILD_SOURCEBRANCH/refs\/heads\/}"
-      if ! [[ $BRANCH =~ ^(master|release/.+)$ ]]; then
+      if ! [[ $BRANCH =~ ^(main|release/.+)$ ]]; then
         exit
       fi
 

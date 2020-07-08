@@ -1,6 +1,18 @@
-//-------------------------------------------------------------------------------------------------------
-//	Copyright 2006 Claes Johanson & Vember Audio
-//-------------------------------------------------------------------------------------------------------
+/*
+** Surge Synthesizer is Free and Open Source Software
+**
+** Surge is made available under the Gnu General Public License, v3.0
+** https://www.gnu.org/licenses/gpl-3.0.en.html
+**
+** Copyright 2004-2020 by various individuals as described by the Git transaction log
+**
+** All source at: https://github.com/surge-synthesizer/surge.git
+**
+** Surge was a commercial product from 2004-2018, with Copyright and ownership
+** in that period held by Claes Johanson at Vember Audio. Claes made Surge
+** open source in September 2018.
+*/
+
 #include "Oscillator.h"
 #if !MAC && !LINUX
 #include <intrin.h>
@@ -14,7 +26,7 @@
 WindowOscillator::WindowOscillator(SurgeStorage* storage,
                                    OscillatorStorage* oscdata,
                                    pdata* localcopy)
-    : Oscillator(storage, oscdata, localcopy)
+   : Oscillator(storage, oscdata, localcopy), lp(storage), hp(storage)
 {}
 
 void WindowOscillator::init(float pitch, bool is_display)
@@ -63,6 +75,13 @@ void WindowOscillator::init(float pitch, bool is_display)
             Sub.Pos[i] = (storage->WindowWT.size + (rand() & (storage->WindowWT.size - 1))) << 16;
       }
    }
+
+   hp.coeff_instantize();
+   lp.coeff_instantize();
+
+   hp.coeff_HP(hp.calc_omega(oscdata->p[3].val.f / 12.0 ) / OSC_OVERSAMPLING, 0.707);
+   lp.coeff_LP2B(lp.calc_omega(oscdata->p[4].val.f / 12.0 ) / OSC_OVERSAMPLING, 0.707);
+
 }
 
 WindowOscillator::~WindowOscillator()
@@ -73,16 +92,20 @@ void WindowOscillator::init_ctrltypes()
    oscdata->p[0].set_name("Morph");
    oscdata->p[0].set_type(ct_countedset_percent);
    oscdata->p[0].set_user_data(oscdata);
-   oscdata->p[0].snap = false;
 
    oscdata->p[1].set_name("Formant");
    oscdata->p[1].set_type(ct_pitch);
    oscdata->p[2].set_name("Window");
    oscdata->p[2].set_type(ct_wt2window);
 
-   oscdata->p[5].set_name("Uni Spread");
+   oscdata->p[3].set_name("Low Cut");
+   oscdata->p[3].set_type(ct_freq_audible_deactivatable);
+   oscdata->p[4].set_name("High Cut");
+   oscdata->p[4].set_type(ct_freq_audible_deactivatable);
+
+   oscdata->p[5].set_name("Unison Detune");
    oscdata->p[5].set_type(ct_oscspread);
-   oscdata->p[6].set_name("Uni Count");
+   oscdata->p[6].set_name("Unison Voices");
    oscdata->p[6].set_type(ct_osccountWT);
 }
 void WindowOscillator::init_default_values()
@@ -90,6 +113,12 @@ void WindowOscillator::init_default_values()
    oscdata->p[0].val.f = 0.0f;
    oscdata->p[1].val.f = 0.0f;
    oscdata->p[2].val.i = 0;
+
+   oscdata->p[3].val.f = oscdata->p[3].val_min.f; // high cut at the bottom
+   oscdata->p[3].deactivated = true;
+   oscdata->p[4].val.f = oscdata->p[4].val_max.f; // low cut at the top
+   oscdata->p[4].deactivated = true;
+
    oscdata->p[5].val.f = 0.2f;
    oscdata->p[6].val.i = 1;
 }
@@ -128,7 +157,7 @@ inline bool _BitScanReverse(unsigned long* result, unsigned long bits)
 }
 #endif
 
-void WindowOscillator::ProcessSubOscs(bool stereo)
+void WindowOscillator::ProcessSubOscs(bool stereo, bool FM)
 {
    const unsigned int M0Mask = 0x07f8;
    unsigned int SizeMask = (oscdata->wt.size << 16) - 1;
@@ -160,6 +189,9 @@ void WindowOscillator::ProcessSubOscs(bool stereo)
       {
          unsigned int Pos = Sub.Pos[so];
          unsigned int RatioA = Sub.Ratio[so];
+         if( FM )
+            RatioA = Sub.FMRatio[so][0];
+         
          unsigned int MipMapA = 0;
          unsigned int MipMapB = 0;
          if (Sub.Table[so] >= oscdata->wt.n_tables)
@@ -179,7 +211,14 @@ void WindowOscillator::ProcessSubOscs(bool stereo)
 
          for (int i = 0; i < BLOCK_SIZE_OS; i++)
          {
-            Pos += RatioA;
+            if( FM )
+            {
+               Pos += Sub.FMRatio[so][i];
+            }
+            else
+            {
+               Pos += RatioA;
+            }
             if (Pos & ~SizeMaskWin)
             {
                Sub.FormantMul[so] = FormantMul;
@@ -242,7 +281,18 @@ void WindowOscillator::process_block(float pitch, float drift, bool stereo, bool
    if (stereo)
       memset(IOutputR, 0, BLOCK_SIZE_OS * sizeof(int));
 
-   float Detune = localcopy[oscdata->p[5].param_id_in_scene].f;
+   float Detune;
+   if( oscdata->p[5].absolute )
+   {
+      // See comment in SurgeSuperOscillator
+      Detune = oscdata->p[5].get_extended(localcopy[oscdata->p[5].param_id_in_scene].f)
+         * storage->note_to_pitch_inv_ignoring_tuning( std::min( 148.f, pitch ) ) * 16 / 0.9443;
+   }
+   else
+   {
+      Detune = oscdata->p[5].get_extended(localcopy[oscdata->p[5].param_id_in_scene].f);
+   }
+   float fmstrength = 32 * M_PI * fmdepth * fmdepth * fmdepth;
    for (int l = 0; l < ActiveSubOscs; l++)
    {
       Sub.DriftLFO[l][0] = drift_noise(Sub.DriftLFO[l][1]);
@@ -254,10 +304,25 @@ void WindowOscillator::process_block(float pitch, float drift, bool stereo, bool
                                        Detune * (DetuneOffset + DetuneBias * (float)l));
       int Ratio = Float2Int(8.175798915f * 32768.f * f * (float)(storage->WindowWT.size) *
                             samplerate_inv); // (65536.f*0.5f), 0.5 for oversampling
+
       Sub.Ratio[l] = Ratio;
+      if( FM )
+      {
+         FMdepth[l].newValue( fmstrength );
+         for( int i=0; i<BLOCK_SIZE_OS; ++i )
+         {
+            float fmadj = ( 1.0 + FMdepth[l].v * master_osc[i] );
+            float f = storage->note_to_pitch(pitch + drift * Sub.DriftLFO[l][0] +
+                                             Detune * (DetuneOffset + DetuneBias * (float)l));
+            int Ratio = Float2Int(8.175798915f * 32768.f * f * fmadj * (float)(storage->WindowWT.size) *
+                                  samplerate_inv); // (65536.f*0.5f), 0.5 for oversampling
+            Sub.FMRatio[l][i] = Ratio;
+            FMdepth[l].process();
+         }
+      }
    }
 
-   ProcessSubOscs(stereo);
+   ProcessSubOscs(stereo, FM);
 
    // int32 -> float conversion
    __m128 scale = _mm_load1_ps(&OutAttenuation);
@@ -278,5 +343,36 @@ void WindowOscillator::process_block(float pitch, float drift, bool stereo, bool
             _mm_store_ps(&output[i], _mm_mul_ps(_mm_cvtepi32_ps(*(__m128i*)&IOutputL[i]), scale));
          }
       }
+   }
+
+   applyFilter();
+}
+
+void WindowOscillator::applyFilter()
+{
+   if( ! oscdata->p[3].deactivated )
+      hp.coeff_HP(hp.calc_omega(localcopy[oscdata->p[3].param_id_in_scene].f / 12.0 ) / OSC_OVERSAMPLING , 0.707);
+   if( ! oscdata->p[4].deactivated )
+      lp.coeff_LP2B(lp.calc_omega(localcopy[oscdata->p[4].param_id_in_scene].f / 12.0 ) / OSC_OVERSAMPLING, 0.707);
+
+   for (int k = 0; k < BLOCK_SIZE_OS; k+= BLOCK_SIZE )
+   {
+      if( ! oscdata->p[3].deactivated )
+         hp.process_block( &(output[k]), &(outputR[k]) );
+      if( ! oscdata->p[4].deactivated )
+         lp.process_block( &(output[k]), &(outputR[k]) );
+   }
+}
+
+
+void WindowOscillator::handleStreamingMismatches(int streamingRevision, int currentSynthStreamingRevision)
+{
+   if( streamingRevision <= 12 )
+   {
+      oscdata->p[3].val.f = oscdata->p[3].val_min.f; // high cut at the bottom
+      oscdata->p[3].deactivated = true;
+      oscdata->p[4].val.f = oscdata->p[4].val_max.f; // low cut at the top
+      oscdata->p[4].deactivated = true;
+      oscdata->p[1].set_type(ct_osc_feedback);
    }
 }

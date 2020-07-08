@@ -9,6 +9,7 @@
 #include "pluginterfaces/vst/ivstmidicontrollers.h"
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/base/ustring.h"
+#include "pluginterfaces/vst/vstpresetkeys.h"
 
 #include "CScalableBitmap.h"
 
@@ -16,6 +17,7 @@
 #include <cwchar>
 #include <codecvt>
 #include <string.h>
+#include <cwchar>
 
 using namespace Steinberg::Vst;
 
@@ -32,7 +34,8 @@ using namespace Steinberg::Vst;
    }
 
 SurgeVst3Processor::SurgeVst3Processor() : blockpos(0), surgeInstance()
-{}
+{
+}
 
 SurgeVst3Processor::~SurgeVst3Processor()
 {
@@ -67,9 +70,11 @@ tresult PLUGIN_API SurgeVst3Processor::initialize(FUnknown* context)
 #endif
 
    //---create Audio In/Out busses------
-   // we want a stereo Input and a Stereo Output
-   addAudioInput(STR16("Stereo In"), SpeakerArr::kStereo);
+   // we want a SideChain Input and a Stereo Output
+   addAudioInput(STR16("SideChain In"), SpeakerArr::kStereo, kAux );
    addAudioOutput(STR16("Stereo Out"), SpeakerArr::kStereo);
+   addAudioOutput(STR16("Scene A Out"), SpeakerArr::kStereo);
+   addAudioOutput(STR16("Scene B Out"), SpeakerArr::kStereo);
 
    //---create Event In/Out busses (1 bus with 16 channels)------
    addEventInput(USTRING("MIDI In"));
@@ -179,15 +184,72 @@ tresult PLUGIN_API SurgeVst3Processor::setState(IBStream* state)
    void* data = malloc(maxsize);
    int32 numBytes = 0;
 
+   /*
+   ** I am leaving a substantial amount of debug code in here since
+   ** the fix we have placed below is tactical at best and we will
+   ** return to this. See #2110
+   */
+#if 0
+   Surge::Debug::openConsole();
+   printf( "------ VST3 SET STATE --------\n" ); 
+   FUnknownPtr<Steinberg::Vst::IStreamAttributes> sa(state);
+   if( ! sa )
+      printf( "No StreamAttributes\n" );
+   auto ga = [sa](const char* a, char *b) {
+                String128 gstring;
+                if( sa && sa->getAttributes()->getString( a, gstring, 128*sizeof(TChar)) == kResultTrue )
+                {
+                   UString128 t(gstring);
+                   char ascii[128];
+                   t.toAscii(b,128);
+                }
+                else
+                {
+                   b[0] = 0;
+                }
+             };
+   char val[256];
+   ga( Steinberg::Vst::PresetAttributes::kPlugInName, val ); printf( "PluginName      : '%s'\n", val );
+   ga( Steinberg::Vst::PresetAttributes::kName, val );       printf( "Name            : '%s'\n", val );
+   ga( Steinberg::Vst::PresetAttributes::kFileName, val );   printf( "FileName        : '%s'\n", val );
+   ga( Steinberg::Vst::PresetAttributes::kStateType, val );  printf( "StateType       : '%s'\n", val );
+#endif
+
+   
    tresult result = state->read(data, maxsize, &numBytes);
+
+   // printf( "numBytes is %d, result is %d\n", numBytes, result );
 
    if (result == kResultOk)
    {
-      surgeInstance->loadRaw(data, numBytes, false);
-      surgeInstance->loadFromDawExtraState();
-      for( auto e : viewsSet )
-          e->loadFromDAWExtraState(surgeInstance.get());
+#if 0      
+      printf( "First 150 bytes of memory chunk\n" );
+      for( auto c=0; c<10; ++c )
+      {
+         char* cd = (char *)data;
+         printf( "%4d  : ", c * 15 );
+         for( auto cc = 0; cc<15; ++cc )
+            printf( "%2x ", (unsigned short)cd[c * 15 + cc ] );
+         printf( "  |  " );
+         for( auto cc = 0; cc<15; ++cc )
+            printf( "%1c", (char)cd[c * 15 + cc ] );
+         printf ("\n");
+      }
+      fflush( stdout );
+#endif
+      bool isSub3 = ( memcmp(data, "sub3", 4 ) == 0 );
 
+      if( isSub3 )
+      {
+         surgeInstance->loadRaw(data, numBytes, false);
+         surgeInstance->loadFromDawExtraState();
+         for( auto e : viewsSet )
+            e->loadFromDAWExtraState(surgeInstance.get());
+      }
+      else
+      {
+         //printf( "Skipping load where I was handed non-sub3 block\n" );
+      }
    }
 
    free(data);
@@ -237,7 +299,7 @@ void SurgeVst3Processor::processEvent(const Event& e)
    case Event::kNoteOnEvent:
       if (e.noteOn.velocity == 0.f)
       {
-         std::cout << "NoteOff with 0 v " << e.noteOff.velocity << std::endl;
+         // std::cout << "NoteOff with 0 v " << e.noteOff.velocity << std::endl;
          getSurge()->releaseNote(e.noteOn.channel, e.noteOn.pitch, e.noteOn.velocity);
       }
       else
@@ -256,9 +318,11 @@ void SurgeVst3Processor::processEvent(const Event& e)
    }
 
    case Event::kPolyPressureEvent:
-      getSurge()->polyAftertouch(e.polyPressure.channel, e.polyPressure.pitch,
-                                 e.polyPressure.pressure);
+   {
+      char cPres = value01ToMidi7Bit(e.polyPressure.pressure);
+      getSurge()->polyAftertouch(e.polyPressure.channel, e.polyPressure.pitch, cPres);
       break;
+   }
    }
 }
 
@@ -292,7 +356,7 @@ void SurgeVst3Processor::processParameterChanges(int sampleOffset,
 
                for (int i = 0; i < numPoints; ++i)
                {
-                  paramQueue->getPoint(0, offsetSamples, value);
+                  paramQueue->getPoint(i, offsetSamples, value);
                   /*
                   if( i == 0 ) 
                   {
@@ -348,6 +412,15 @@ void SurgeVst3Processor::processParameterChanges(int sampleOffset,
                }
                else
                {
+                  if( id >= metaparam_offset && id <= metaparam_offset + n_midi_controller_params )
+                  {
+                     paramQueue->getPoint(numPoints - 1, offsetSamples, value);
+                     
+                     // VST3 wants to send me these events a LOT
+                     if( surgeInstance->getParameter01(id) != value )
+                        surgeInstance->setParameter01(id, value, true);
+                  }
+
                   // std::cerr << "Unable to handle parameter " << id << " with npoints " << numPoints << std::endl;
                }
             }
@@ -360,7 +433,7 @@ tresult PLUGIN_API SurgeVst3Processor::process(ProcessData& data)
 {
    CHECK_INITIALIZED
 
-   if (data.numInputs == 0 || data.numOutputs == 0)
+   if (data.numOutputs == 0)
    {
       // nothing to do
       return kResultOk;
@@ -371,7 +444,7 @@ tresult PLUGIN_API SurgeVst3Processor::process(ProcessData& data)
    int32 numChannels = 2;
    int32 numSamples = data.numSamples;
 
-   surgeInstance->process_input = data.numInputs != 0;
+   surgeInstance->process_input = data.numInputs != 0 && data.inputs != nullptr;
 
    float** in = surgeInstance->process_input ? data.inputs[0].channelBuffers32 : nullptr;
    float** out = data.outputs[0].channelBuffers32;
@@ -382,7 +455,10 @@ tresult PLUGIN_API SurgeVst3Processor::process(ProcessData& data)
    int noteEventIndex = 0;
    int parameterEventIndex = 0;
 
-   if (data.processContext && data.processContext->state & ProcessContext::kProjectTimeMusicValid)
+   if (data.processContext &&
+       data.processContext->state & ProcessContext::kProjectTimeMusicValid &&
+       data.processContext->state & ProcessContext::kPlaying // See #1491 for a discussion of this choice
+      )
    {
       surgeInstance->time_data.ppqPos = data.processContext->projectTimeMusic;
    }
@@ -405,6 +481,17 @@ tresult PLUGIN_API SurgeVst3Processor::process(ProcessData& data)
             surgeInstance->time_data.tempo = tempo;
             surgeInstance->time_data.ppqPos +=
                 (double)BLOCK_SIZE * tempo / (60. * data.processContext->sampleRate);
+
+            if (data.processContext->state & ProcessContext::kTimeSigValid)
+            {
+               surgeInstance->time_data.timeSigNumerator = data.processContext->timeSigNumerator;
+               surgeInstance->time_data.timeSigDenominator = data.processContext->timeSigDenominator;
+            }
+            else
+            {
+               surgeInstance->time_data.timeSigNumerator = 4;
+               surgeInstance->time_data.timeSigDenominator = 4;
+            }
          }
 
          processEvents(i, data.inputEvents, noteEventIndex);
@@ -413,7 +500,7 @@ tresult PLUGIN_API SurgeVst3Processor::process(ProcessData& data)
          surgeInstance->process();
       }
 
-      if (surgeInstance->process_input)
+      if (surgeInstance->process_input && in)
       {
          int inp;
          for (inp = 0; inp < N_INPUTS; inp++)
@@ -426,6 +513,16 @@ tresult PLUGIN_API SurgeVst3Processor::process(ProcessData& data)
       for (outp = 0; outp < N_OUTPUTS; outp++)
       {
          out[outp][i] = (float)surgeInstance->output[outp][blockpos];
+      }
+      if( numOutputs == 3 )
+      {
+         float** outA = data.outputs[1].channelBuffers32;
+         float** outB = data.outputs[2].channelBuffers32;
+         for(int c=0;c<2;++c)
+         {
+            outA[c][i] = (float)surgeInstance->sceneout[0][c][blockpos];
+            outB[c][i] = (float)surgeInstance->sceneout[1][c][blockpos];
+         }
       }
 
       blockpos++;
@@ -440,6 +537,11 @@ tresult PLUGIN_API SurgeVst3Processor::process(ProcessData& data)
 
    // mark as not silent
    data.outputs[0].silenceFlags = 0;
+   if( numOutputs == 3 )
+   {
+      data.outputs[1].silenceFlags = 0;
+      data.outputs[2].silenceFlags = 0;
+   }
 
    _fpuState.restore();
 
@@ -508,19 +610,27 @@ tresult SurgeVst3Processor::beginEdit(ParamID id)
        beginEditGuard[id] = 0;
    }
    beginEditGuard[id] ++;
-   if (id >= getParameterCount())
+
+   int mappedId =
+       SurgeGUIEditor::applyParameterOffset(surgeInstance->remapExternalApiToInternalId(id));
+
+   if( id >= metaparam_offset && id <= metaparam_offset + n_midi_controller_params )
+   {
+      mappedId = id;
+   }
+   else if (id >= getParameterCount() || mappedId < 0 )
    {
       return kInvalidArgument;
    }
-   if( id >= getParameterCountWithoutMappings() )
+   else if( id >= getParameterCountWithoutMappings() )
    {
       return kResultOk;
    }
 
-   int mappedId =
-       SurgeGUIEditor::applyParameterOffset(surgeInstance->remapExternalApiToInternalId(id));
+   
    if( beginEditGuard[id] == 1 )
    {
+      // std::cout << "BeginEdit " << mappedId << std::endl;
        return Steinberg::Vst::SingleComponentEffect::beginEdit(mappedId);
    }
    else
@@ -531,25 +641,43 @@ tresult SurgeVst3Processor::beginEdit(ParamID id)
 
 tresult SurgeVst3Processor::performEdit(ParamID id, Steinberg::Vst::ParamValue valueNormalized)
 {
-   if (id >= getParameterCount())
+   int mappedId =
+       SurgeGUIEditor::applyParameterOffset(surgeInstance->remapExternalApiToInternalId(id));
+
+   if( id >= metaparam_offset && id <= metaparam_offset + n_midi_controller_params )
+   {
+      mappedId = id;
+   }
+   else if (id >= getParameterCount() || mappedId < 0 )
    {
       return kInvalidArgument;
    }
-   if( id >= getParameterCountWithoutMappings() )
+   else if( id >= getParameterCountWithoutMappings() )
    {
       return kResultOk;
    }
 
-   int mappedId =
-       SurgeGUIEditor::applyParameterOffset(surgeInstance->remapExternalApiToInternalId(id));
+   // std::cout << "PerformEdit " << mappedId << std::endl;
+         
    return Steinberg::Vst::SingleComponentEffect::performEdit(mappedId, valueNormalized);
 }
 
 tresult SurgeVst3Processor::endEdit(ParamID id)
 {
-   if (id >= getParameterCount() )
+   int mappedId =
+       SurgeGUIEditor::applyParameterOffset(surgeInstance->remapExternalApiToInternalId(id));
+
+   if( id >= metaparam_offset && id <= metaparam_offset + n_midi_controller_params )
+   {
+      mappedId = id;
+   }
+   else if (id >= getParameterCount() && mappedId < 0 )
    {
       return kInvalidArgument;
+   }
+   else if( id >= getParameterCountWithoutMappings() )
+   {
+      return kResultOk;
    }
 
    auto endcount = -1;
@@ -565,22 +693,14 @@ tresult SurgeVst3Processor::endEdit(ParamID id)
        endcount = beginEditGuard[id];
    };
 
-   if( id > getParameterCountWithoutMappings() )
+   if( endcount == 0 )
    {
-      return kResultOk;
+      // std::cout << "EndEdit " << mappedId << std::endl;
+      return Steinberg::Vst::SingleComponentEffect::endEdit(mappedId);
    }
    else
    {
-      int mappedId =
-         SurgeGUIEditor::applyParameterOffset(surgeInstance->remapExternalApiToInternalId(id));
-      if( endcount == 0 )
-      {
-         return Steinberg::Vst::SingleComponentEffect::endEdit(mappedId);
-      }
-      else
-      {
-         return kResultOk;
-      }
+      return kResultOk;
    }
 }
 
@@ -624,6 +744,9 @@ int32 SurgeVst3Processor::getParameterCountWithoutMappings()
 
 tresult PLUGIN_API SurgeVst3Processor::getParameterInfo(int32 paramIndex, ParameterInfo& info)
 {
+   // Concerning - reaper calls this all the time!
+   // std::cout << __LINE__ << " getParameterInfo " << paramIndex << std::endl;
+   // stackToInfo();
    CHECK_INITIALIZED
 
    if (paramIndex >= getParameterCount())
@@ -640,6 +763,20 @@ tresult PLUGIN_API SurgeVst3Processor::getParameterInfo(int32 paramIndex, Parame
       info.unitId = 0; // meta.clump;
       
       // FIXME - set the title
+      char nm8[512];
+      wchar_t nm[512];
+      auto im = paramIndex - midi_controller_0;
+      auto ich = im % 16;
+      auto icc = im / 16;
+      
+      snprintf(nm8, 512, "MIDI CC %d, Channel %d", icc, ich + 1);
+      swprintf(nm, 512, L"%s", nm8);
+#if MAC || LINUX
+      std::copy(nm, nm + 128, info.title);
+#else
+      swprintf(reinterpret_cast<wchar_t *>(info.title), 128, L"%S", nm);
+#endif
+      
    }
    else
    {
@@ -683,6 +820,12 @@ tresult PLUGIN_API SurgeVst3Processor::getParameterInfo(int32 paramIndex, Parame
       info.defaultNormalizedValue = meta.fdefault;
       info.unitId = 0; // meta.clump;
       info.flags = ParameterInfo::kCanAutomate;
+
+      //char nm[512];
+      //surgeInstance->getParameterName( id, nm );
+      // std::cout << "gPID " << paramIndex << " "  << " " << info.id << std::endl;
+            
+
    }
    return kResultOk;
 }
@@ -691,14 +834,17 @@ tresult PLUGIN_API SurgeVst3Processor::getParamStringByValue(ParamID tag,
                                                              ParamValue valueNormalized,
                                                              String128 ontostring)
 {
+   // std::cout << __LINE__ << " " << __func__ << " " << tag << std::endl;
    CHECK_INITIALIZED;
 
-   if (tag >= getParameterCount() )
+   if( tag >= metaparam_offset && tag <= metaparam_offset + num_metaparameters ) 
+   {
+   }
+   else if (tag >= getParameterCount() )
    {
       return kInvalidArgument;
    }
-
-   if( tag >= getParameterCountWithoutMappings() )
+   else if( tag >= getParameterCountWithoutMappings() )
    {
       return kResultOk;
    }
@@ -718,6 +864,7 @@ tresult PLUGIN_API SurgeVst3Processor::getParamValueByString(ParamID tag,
                                                              TChar* string,
                                                              ParamValue& valueNormalized)
 {
+   // std::cout << __LINE__ << " " << __func__ << " " << tag << std::endl;
    CHECK_INITIALIZED;
       
    if (tag >= getParameterCount())
@@ -731,13 +878,17 @@ tresult PLUGIN_API SurgeVst3Processor::getParamValueByString(ParamID tag,
 ParamValue PLUGIN_API SurgeVst3Processor::normalizedParamToPlain(ParamID tag,
                                                                  ParamValue valueNormalized)
 {
+   // std::cout << __LINE__ << " " << __func__ << " " << tag << std::endl;
    ABORT_IF_NOT_INITIALIZED;
 
-   if (tag >= getParameterCount())
+   if( tag >= metaparam_offset && tag <= metaparam_offset + num_metaparameters ) 
+   {
+   }
+   else if (tag >= getParameterCount())
    {
       return kInvalidArgument;
    }
-   if( tag >= getParameterCountWithoutMappings())
+   else if( tag >= getParameterCountWithoutMappings())
    {
       return 0;
    }
@@ -747,23 +898,32 @@ ParamValue PLUGIN_API SurgeVst3Processor::normalizedParamToPlain(ParamID tag,
 
 ParamValue PLUGIN_API SurgeVst3Processor::plainParamToNormalized(ParamID tag, ParamValue plainValue)
 {
+   // std::cout << __LINE__ << " " << __func__ << " " << tag << " " << plainValue << std::endl;
    ABORT_IF_NOT_INITIALIZED
 
-   if (tag >= getParameterCountWithoutMappings())
+   if( tag >= metaparam_offset && tag <= metaparam_offset + num_metaparameters ) 
+   {
+   }
+   else if (tag >= getParameterCountWithoutMappings())
    {
        // return kInvalidArgument;
        // kInvalidArgument is not a ParamValue. In this case just
        return 0;
    }
 
-   return surgeInstance->valueToNormalized(tag, plainValue);
+   auto res = surgeInstance->valueToNormalized(tag, plainValue);
+   // std::cout << __LINE__ << " " << __func__ << " " << tag << " " << plainValue << " = " << res << std::endl;
+   return res;
 }
 
 ParamValue PLUGIN_API SurgeVst3Processor::getParamNormalized(ParamID tag)
 {
+   // std::cout << __LINE__ << " getParamNormalized " << tag << std::endl;
    ABORT_IF_NOT_INITIALIZED;
 
-   if (tag >= getParameterCountWithoutMappings())
+   if(tag >= getParameterCountWithoutMappings() &&
+      ! ( tag >= metaparam_offset && tag <= metaparam_offset + num_metaparameters )
+      )
    {
       // return kInvalidArgument;
       // kInvalidArgument is not a ParamValue. In this case just
@@ -771,18 +931,24 @@ ParamValue PLUGIN_API SurgeVst3Processor::getParamNormalized(ParamID tag)
    }
 
    auto res = surgeInstance->getParameter01(tag);
+   //std::cout << __LINE__ << " getParamNormalized " << tag << " = " << res << " " << floatBytes(res) << std::endl;
+   //stackToInfo();
    return res;
 }
 
 tresult PLUGIN_API SurgeVst3Processor::setParamNormalized(ParamID tag, ParamValue value)
 {
+   // std::cout << __LINE__ << " " << __func__ << " " << tag << " " << value << std::endl;
    CHECK_INITIALIZED;
 
-   if (tag >= getParameterCount())
+   if( tag >= metaparam_offset && tag <= metaparam_offset + num_metaparameters ) 
+   {
+   }
+   else if (tag >= getParameterCount())
    {
       return kInvalidArgument;
    }
-   if( tag >= getParameterCountWithoutMappings() )
+   else if( tag >= getParameterCountWithoutMappings() )
    {
       return kResultOk;
    }
@@ -796,8 +962,11 @@ tresult PLUGIN_API SurgeVst3Processor::setParamNormalized(ParamID tag, ParamValu
    ** we are specially dealing with midi controls it is the wrong thing to do; it makes the FX
    ** control and the control 0 the same. So here just pass the tag on directly.
    */
+   
    if( value != surgeInstance->getParameter01(tag) )
+   {
       surgeInstance->setParameter01(tag, value, true);
+   }
 
    return kResultOk;
 }
@@ -814,6 +983,10 @@ tresult PLUGIN_API SurgeVst3Processor::getMidiControllerAssignment(int32 busInde
                                                                    CtrlNumber midiControllerNumber,
                                                                    ParamID& id /*out*/)
 {
+   // Why even ask me? But you do. So...
+   if( midiControllerNumber >= kCountCtrlNumber || midiControllerNumber < 0 )
+      return kResultFalse;
+   
    /*
    ** Alrighty dighty. What VST3 wants us to do here is, for the controller number,
    ** tell it a parameter to map to. We alas don't have a parameter to map to because
@@ -822,7 +995,6 @@ tresult PLUGIN_API SurgeVst3Processor::getMidiControllerAssignment(int32 busInde
    */
 
    id = midi_controller_0 + midiControllerNumber * 16 + channel;
-   // std::cout << "getMidiControllerAssignment " << channel << " midiControllerNumber=" << midiControllerNumber << " id=" << id << std::endl;
    return kResultTrue;
 }
 
@@ -844,11 +1016,21 @@ void SurgeVst3Processor::updateDisplay()
 
 void SurgeVst3Processor::setParameterAutomated(int inputParam, float value)
 {
-   if( inputParam >= getParameterCountWithoutMappings() ) return;
+   // std::cout << "setParameterAutomated " << inputParam << " " << value << std::endl; 
+   int externalparam;
+   if( inputParam >= metaparam_offset && inputParam <= metaparam_offset + n_midi_controller_params )
+   {
+      externalparam = inputParam;
+   }
+   else
+   {
+      if( inputParam >= getParameterCountWithoutMappings() ) return;
    
-   int externalparam = SurgeGUIEditor::unapplyParameterOffset(
-       surgeInstance->remapExternalApiToInternalId(inputParam));
+      externalparam = SurgeGUIEditor::unapplyParameterOffset(
+         surgeInstance->remapExternalApiToInternalId(inputParam));
+   }
 
+   
    /*
    ** This particular choice of implementation is why we have nested
    ** begin/end pairs with the guard. We discovered this clsoing in on

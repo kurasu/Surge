@@ -1,10 +1,25 @@
-//-------------------------------------------------------------------------------------------------------
-//	Copyright 2005 Claes Johanson & Vember Audio
-//-------------------------------------------------------------------------------------------------------
+/*
+** Surge Synthesizer is Free and Open Source Software
+**
+** Surge is made available under the Gnu General Public License, v3.0
+** https://www.gnu.org/licenses/gpl-3.0.en.html
+**
+** Copyright 2004-2020 by various individuals as described by the Git transaction log
+**
+** All source at: https://github.com/surge-synthesizer/surge.git
+**
+** Surge was a commercial product from 2004-2018, with Copyright and ownership
+** in that period held by Claes Johanson at Vember Audio. Claes made Surge
+** open source in September 2018.
+*/
+
 #pragma once
 #include "vstcontrols.h"
+#include "Parameter.h"
+#include <iostream>
+#include "SkinSupport.h"
 
-class CParameterTooltip : public VSTGUI::CControl
+class CParameterTooltip : public VSTGUI::CControl, public Surge::UI::SkinConsumingComponnt
 {
 public:
    CParameterTooltip(const VSTGUI::CRect& size) : VSTGUI::CControl(size, 0, 0, 0)
@@ -15,7 +30,7 @@ public:
       last_tag = -1;
    }
 
-   void setLabel(const char* txt1, const char* txt2)
+   void setLabel(const char* txt1, const char* txt2, const char* txt2left = nullptr)
    {
       if (txt1)
          strncpy(label[0], txt1, 256);
@@ -25,9 +40,20 @@ public:
          strncpy(label[1], txt2, 256);
       else
          label[1][0] = 0;
+      if (txt2left)
+         strncpy(label2left, txt2left, 256);
+      else
+         label2left[0] = 0;
+      
       setDirty(true);
    }
 
+   int getMaxLabelLen() {
+      auto l0len = strlen(label[0]);
+      auto l1len = strlen(label[1]) + strlen(label2left);
+      return std::max( l0len, l1len );
+   }
+   
    void Show()
    {
       visible = true;
@@ -51,56 +77,114 @@ public:
       return visible;
    }
 
-   virtual void draw(VSTGUI::CDrawContext* dc)
+   virtual void draw(VSTGUI::CDrawContext* dc) override
    {
       if (visible)
       {
-         // COffscreenContext *dc =
-         // COffscreenContext::create(getFrame(),size.width(),size.height());
+         dc->setFont(VSTGUI::kNormalFontSmall);
 
-          dc->setFont(VSTGUI::kNormalFontSmall);
+         auto frameCol = skin->getColor( "infowindow.border", VSTGUI::kBlackCColor );
+         auto bgCol = skin->getColor( "infowindow.background", VSTGUI::kWhiteCColor );
 
-         VSTGUI::CRect smaller = getViewSize();
-         int shrink = 0;
-         /*if(!label[0][0])
-         {
-                 int width = dc->getStringWidth(label[1]);
-                 shrink = limit_range(150 - width,0,75);
-                 
-         }
-         //smaller.inset(shrink>>1,0);'
-         smaller.x += shrink;*/
-
+         auto txtCol = skin->getColor( "infowindow.foreground", VSTGUI::kBlackCColor );
+         auto mpCol = skin->getColor( "infowindow.foreground.modulationpositive", txtCol );
+         auto mnCol = skin->getColor( "infowindow.foreground.modulationnegative", txtCol );
+         auto mpValCol = skin->getColor( "infowindow.foreground.modulationvaluepositive", mpCol );
+         auto mnValCol = skin->getColor( "infowindow.foreground.modulationvaluenegative", mnCol );
+         
+         
+         
          auto size = getViewSize();
          size = size.inset(0.75, 0.75);
-         dc->setFrameColor(VSTGUI::kBlackCColor);
+         dc->setFrameColor(frameCol);
          dc->drawRect(size);
          VSTGUI::CRect sizem1(size);
          sizem1.inset(1, 1);
-         dc->setFillColor(VSTGUI::kWhiteCColor);
+         dc->setFillColor(bgCol);
          dc->drawRect(sizem1, VSTGUI::kDrawFilled);
-         dc->setFontColor(VSTGUI::kBlackCColor);
+         dc->setFontColor(txtCol);
          VSTGUI::CRect trect(size);
          trect.inset(4, 1);
-         trect.right -= shrink;
          VSTGUI::CRect tupper(trect), tlower(trect);
          tupper.bottom = tupper.top + 13;
          tlower.top = tlower.bottom - 15;
 
-         if (label[0][0])
-             dc->drawString(label[0], tupper, VSTGUI::kLeftText, true);
-         // dc->drawString(label[1],tlower,false,label[0][0]?kRightText:kCenterText);
-         dc->drawString(label[1], tlower, VSTGUI::kRightText, true);
-         // dc->copyFrom(dc1,smaller);
-         // dc->forget();
+         if( hasiwstrings )
+         {
+            VSTGUI::CRect tmid(trect);
+            tmid.bottom = trect.bottom - 18;
+            tmid.top = trect.top + 15;
+            if( ! extendedwsstrings )
+            {
+               tmid = tlower;
+            }
+            if (label[0][0])
+            {
+               dc->drawString(label[0], tupper, VSTGUI::kLeftText, true);
+            }
+
+            if( ! extendedwsstrings )
+            {
+               dc->drawString( iwstrings.val.c_str(), tmid, VSTGUI::kLeftText, true );
+               dc->setFontColor( mpCol );
+               dc->drawString( iwstrings.dvalplus.c_str(), tmid, VSTGUI::kRightText, true );
+               dc->setFontColor( txtCol );
+            }
+            else
+            {
+               dc->drawString( iwstrings.val.c_str(), tmid, VSTGUI::kCenterText, true );
+               dc->setFontColor( mpCol );
+               dc->drawString( iwstrings.dvalplus.c_str(), tmid, VSTGUI::kRightText, true );
+               dc->setFontColor( mnCol );
+               dc->drawString( iwstrings.dvalminus.c_str(), tmid, VSTGUI::kLeftText, true );
+
+               dc->setFontColor( mpValCol );
+               dc->drawString( iwstrings.valplus.c_str(), tlower, VSTGUI::kRightText, true );
+               dc->setFontColor( mnValCol );
+               dc->drawString( iwstrings.valminus.c_str(), tlower, VSTGUI::kLeftText, true );
+               dc->setFontColor( txtCol );
+            }
+         }
+         else
+         {
+            if (label[0][0])
+            {
+               dc->drawString(label[0], tupper, VSTGUI::kLeftText, true);
+            }
+            // dc->drawString(label[1],tlower,false,label[0][0]?kRightText:kCenterText);
+            dc->drawString(label[1], tlower, VSTGUI::kRightText, true);
+                     
+            if( label2left[0] )
+            {
+               dc->drawString(label2left, tlower, VSTGUI::kLeftText, true);
+            }
+         }
       }
       setDirty(false);
    }
 
+   void setMDIWS( const ModulationDisplayInfoWindowStrings &i )
+      {
+         iwstrings = i;
+         hasiwstrings = true;
+      }
+
+   void setExtendedMDIWS(bool b)
+      {
+         extendedwsstrings = b;
+      }
+   
+   void clearMDIWS() { hasiwstrings = false; }
+   bool hasMDIWS() { return hasiwstrings; }
+   
 protected:
-   char label[2][256];
+   char label[2][256], label2left[256];
    bool visible;
    int last_tag;
-
+   
+   ModulationDisplayInfoWindowStrings iwstrings;
+   bool hasiwstrings = false;
+   bool extendedwsstrings = false;
+   
    CLASS_METHODS(CParameterTooltip, VSTGUI::CControl)
 };

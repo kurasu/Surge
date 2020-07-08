@@ -116,10 +116,10 @@ public:
                                Steinberg::Vst::ParamValue valueNormalized);
    virtual tresult endEdit(Steinberg::Vst::ParamID id);
 #else
-   virtual tresult PLUGIN_API beginEdit(Steinberg::Vst::ParamID id);
+   virtual tresult PLUGIN_API beginEdit(Steinberg::Vst::ParamID id) override;
    virtual tresult PLUGIN_API performEdit(Steinberg::Vst::ParamID id,
-                               Steinberg::Vst::ParamValue valueNormalized);
-   virtual tresult PLUGIN_API endEdit(Steinberg::Vst::ParamID id);
+                               Steinberg::Vst::ParamValue valueNormalized) override;
+   virtual tresult PLUGIN_API endEdit(Steinberg::Vst::ParamID id) override;
 #endif
     
 protected:
@@ -144,7 +144,7 @@ protected:
    FpuState _fpuState;
 
    int midi_controller_0, midi_controller_max;
-   const int n_midi_controller_params = 16 * Steinberg::Vst::ControllerNumbers::kCountCtrlNumber;
+   const int n_midi_controller_params = 16 * (Steinberg::Vst::ControllerNumbers::kCountCtrlNumber);
    
 public:
    OBJ_METHODS(SurgeVst3Processor, Steinberg::Vst::SingleComponentEffect)

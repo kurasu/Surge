@@ -1,6 +1,18 @@
-//-------------------------------------------------------------------------------------------------------
-//	Copyright 2005-2006 Claes Johanson & Vember Audio
-//-------------------------------------------------------------------------------------------------------
+/*
+** Surge Synthesizer is Free and Open Source Software
+**
+** Surge is made available under the Gnu General Public License, v3.0
+** https://www.gnu.org/licenses/gpl-3.0.en.html
+**
+** Copyright 2004-2020 by various individuals as described by the Git transaction log
+**
+** All source at: https://github.com/surge-synthesizer/surge.git
+**
+** Surge was a commercial product from 2004-2018, with Copyright and ownership
+** in that period held by Claes Johanson at Vember Audio. Claes made Surge
+** open source in September 2018.
+*/
+
 #include "DspUtilities.h"
 #include "SurgeError.h"
 #include "SurgeStorage.h"
@@ -41,7 +53,9 @@ float sinctable1X alignas(16)[(FIRipol_M + 1) * FIRipol_N];
 short sinctableI16 alignas(16)[(FIRipol_M + 1) * FIRipolI16_N];
 float table_dB alignas(16)[512],
       table_envrate_lpf alignas(16)[512],
-      table_envrate_linear alignas(16)[512];
+      table_envrate_linear alignas(16)[512],
+      table_glide_exp alignas(16)[512],
+      table_glide_log alignas(16)[512];
 float waveshapers alignas(16)[8][1024];
 float samplerate = 0, samplerate_inv;
 double dsamplerate, dsamplerate_inv;
@@ -49,7 +63,13 @@ double dsamplerate_os, dsamplerate_os_inv;
 
 using namespace std;
 
-SurgeStorage::SurgeStorage(std::string suppliedDataPath)
+#if WINDOWS
+void dummyExportedWindowsToLookupDLL() {
+}
+#endif
+
+
+SurgeStorage::SurgeStorage(std::string suppliedDataPath) : otherscene_clients(0)
 {
    _patch.reset(new SurgePatch(this));
 
@@ -109,6 +129,8 @@ SurgeStorage::SurgeStorage(std::string suppliedDataPath)
    last_key[0] = 60;
    last_key[1] = 60;
    temposyncratio = 1.f;
+   temposyncratio_inv = 0.0f; // Use this as a sentinel (since it was not initialized prior to 1.6.5 this was the value at least win and mac had). #1444
+   
    songpos = 0;
 
    for (int i = 0; i < n_customcontrollers; i++)
@@ -178,18 +200,31 @@ SurgeStorage::SurgeStorage(std::string suppliedDataPath)
    if(!hasSuppliedDataPath)
    {
        const char* xdgDataPath = getenv("XDG_DATA_HOME");
+       std::string localDataPath = std::string(homePath) + "/.local/share/surge/";
        if (xdgDataPath)
-           datapath = std::string(xdgDataPath) + "/Surge/";
+       {
+           datapath = std::string(xdgDataPath) + "/surge/";
+       }
+       else if ( fs::is_directory(localDataPath) )
+       {
+           datapath = localDataPath;
+       }
        else
-           datapath = std::string(homePath) + "/.local/share/Surge/";
+       {
+          datapath = std::string(homePath) + "/.local/share/Surge/";
+       }
        
        /*
        ** If local directory doesn't exists - we probably came here through an installer -
-       ** use /usr/share/Surge as our last guess
+       ** check for /usr/share/surge and use /usr/share/Surge as our last guess
        */
        if (! fs::is_directory(datapath))
        {
-           datapath = "/usr/share/Surge/";
+          std::string systemDataPath = "/usr/share/surge/";
+          if ( fs::is_directory(systemDataPath) )
+             datapath = systemDataPath;
+          else
+             datapath = "/usr/share/Surge/";
        }
    }
    else
@@ -226,26 +261,97 @@ SurgeStorage::SurgeStorage(std::string suppliedDataPath)
    {
       userDataPath = dotSurge;
    }
-   std::cout << "UserDataPath is " << userDataPath << std::endl;
+   //std::cout << "DataPath is " << datapath << std::endl;
+   //std::cout << "UserDataPath is " << userDataPath << std::endl;
   
 #elif WINDOWS
 #if TARGET_RACK
    datapath = suppliedDataPath;
 #else
-   PWSTR localAppData;
-   if (!SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localAppData))
+   bool foundSurge = false;
+   std::string dllPath = "";
+
+   // First check the portable mode sitting beside me
    {
-      CHAR path[4096];
-      wsprintf(path, "%S\\Surge\\", localAppData);
-      datapath = path;
+      CHAR path[MAX_PATH];
+      HMODULE hm = NULL;
+
+      if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | 
+                            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            (LPCSTR) &dummyExportedWindowsToLookupDLL, &hm) == 0)
+      {
+         int ret = GetLastError();
+         printf( "GetModuleHandle failed, error = %d\n", ret);
+         // Return or however you want to handle an error.
+         goto bailOnPortable;
+      }
+      if (GetModuleFileName(hm, path, sizeof(path)) == 0)
+      {
+         int ret = GetLastError();
+         printf( "GetModuleFileName failed, error = %d\n", ret);
+         // Return or however you want to handle an error.
+         goto bailOnPortable;
+      }
+
+      // The path variable should now contain the full filepath for this DLL.
+      std::string pn = path;
+      int ep;
+      if( (ep = pn.rfind( "\\" )) != string::npos )
+      {
+         dllPath = pn.substr(0,ep);;
+         auto spath = pn.substr( 0, ep ) + "\\SurgeData\\";
+         datapath = spath;
+         if( fs::is_directory( fs::path( spath ) ) )
+         {
+            foundSurge = true;
+         }
+         else
+         {
+            datapath = "";
+         }
+      }
+   }
+bailOnPortable:
+   
+   PWSTR commonAppData;
+   if( ! foundSurge ) {
+      if (!SHGetKnownFolderPath(FOLDERID_ProgramData, 0, nullptr, &commonAppData))
+      {
+         CHAR path[4096];
+         wsprintf(path, "%S\\Surge\\", commonAppData);
+         datapath = path;
+         if( fs::is_directory( fs::path( datapath ) ) )
+            foundSurge = true;
+         else
+            datapath = "";
+      }
+   }
+   
+   if( ! foundSurge ) {
+      PWSTR localAppData;
+      if (!SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localAppData))
+      {
+         CHAR path[4096];
+         wsprintf(path, "%S\\Surge\\", localAppData);
+         datapath = path;
+         foundSurge = true;
+      }
    }
 
-   PWSTR documentsFolder;
-   if (!SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &documentsFolder))
+   // Portable - first check for dllPath\\SurgeUserData
+   if( dllPath != "" && fs::is_directory( fs::path( dllPath + "\\SurgeUserData\\" )))
    {
-      CHAR path[4096];
-      wsprintf(path, "%S\\Surge\\", documentsFolder);
-      userDataPath = path;
+      userDataPath = dllPath + "\\SurgeUserData\\";
+   }
+   else 
+   {
+      PWSTR documentsFolder;
+      if (!SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &documentsFolder))
+      {
+         CHAR path[4096];
+         wsprintf(path, "%S\\Surge\\", documentsFolder);
+         userDataPath = path;
+      }
    }
 #endif
 #endif
@@ -257,6 +363,24 @@ SurgeStorage::SurgeStorage(std::string suppliedDataPath)
    {
        userDataPath = userSpecifiedDataPath;
    }
+
+   userFXPath = userDataPath +
+#if WINDOWS
+      "\\"
+#else
+      "/"
+#endif
+      + "FXSettings";
+
+   
+   userMidiMappingsPath = userDataPath +
+#if WINDOWS
+      "\\"
+#else
+      "/"
+#endif
+      + "MIDIMappings";
+   
    
 #if LINUX
    if (!snapshotloader.Parse((const char*)&configurationXmlStart, 0,
@@ -276,13 +400,6 @@ SurgeStorage::SurgeStorage(std::string suppliedDataPath)
    }
 #endif
 
-   TiXmlElement* e = TINYXML_SAFE_TO_ELEMENT(snapshotloader.FirstChild("autometa"));
-   if (e)
-   {
-      defaultname = e->Attribute("name");
-      defaultsig = e->Attribute("comment");
-   }
-
    load_midi_controllers();
 
 #if !TARGET_RACK   
@@ -299,12 +416,13 @@ SurgeStorage::SurgeStorage(std::string suppliedDataPath)
 #endif
    
    getPatch().scene[0].osc[0].wt.dt = 1.0f / 512.f;
-   load_wt(0, &getPatch().scene[0].osc[0].wt);
+   load_wt(0, &getPatch().scene[0].osc[0].wt, &getPatch().scene[0].osc[0]);
 
    // WindowWT is a WaveTable which now has a constructor so don't do this
    // memset(&WindowWT, 0, sizeof(WindowWT));
-   if( ! load_wt_wt(datapath + "windows.wt", &WindowWT) )
+   if( loadWtAndPatch && ! load_wt_wt(datapath + "windows.wt", &WindowWT) )
    {
+      WindowWT.size = 0;
       std::ostringstream oss;
       oss << "Unable to load '" << datapath << "/windows.wt'. This file is required for surge to operate "
           << "properly. This occurs when Surge is mis-installed and shared resources are not in the "
@@ -320,6 +438,77 @@ SurgeStorage::SurgeStorage(std::string suppliedDataPath)
 #endif
           << " Please install shared assets correctly and restart.";
       Surge::UserInteractions::promptError(oss.str(), "Unable to load windows.wt");
+   }
+
+   // Tunings Library Support
+   currentScale = Tunings::evenTemperament12NoteScale();
+   currentMapping = Tunings::KeyboardMapping();
+
+   // Load the XML DocStrings
+   auto dsf = datapath + "paramdocumentation.xml";
+   TiXmlDocument doc;
+   if( ! doc.LoadFile(dsf) || doc.Error() )
+   {
+      std::cout << "Unable to load  '" << dsf << "'"
+                 << std::endl;
+      std::cout << "Unable to parse\nError is:\n"
+                 << doc.ErrorDesc() << " at row=" << doc.ErrorRow() << " col=" << doc.ErrorCol()
+                 << std::endl;
+   }
+   else
+   {
+      TiXmlElement* pdoc = TINYXML_SAFE_TO_ELEMENT(doc.FirstChild("param-doc"));
+      if( ! pdoc )
+      {
+         Surge::UserInteractions::promptError( "Malformed top element in paramdocumentation.xml - not a param-doc", "Surge ERror" );
+      }
+      else
+      {
+         for( auto pchild = pdoc->FirstChildElement(); pchild; pchild = pchild->NextSiblingElement() )
+         {
+            if( strcmp( pchild->Value(),"ctrl_group" ) == 0 )
+            {
+               int g = 0;
+               if( pchild->QueryIntAttribute("group", &g ) == TIXML_SUCCESS )
+               {
+                  std::string help_url = pchild->Attribute( "help_url" );
+                  if( help_url.size() > 0 )
+                     helpURL_controlgroup[g] = help_url;
+               }
+            }
+            else if( strcmp( pchild->Value(), "param" ) == 0 )
+            {
+               std::string id = pchild->Attribute( "id" );
+               std::string help_url = pchild->Attribute( "help_url" );
+               int t = 0;
+               if( help_url.size() > 0 )
+               {
+                  if( pchild->QueryIntAttribute( "type", &t ) == TIXML_SUCCESS )
+                  {
+                     helpURL_paramidentifier_typespecialized[std::make_pair(id, t)] = help_url;
+                  }
+                  else
+                  {
+                     helpURL_paramidentifier[id] = help_url;
+                  }
+               }
+            }
+            else if( strcmp( pchild->Value(), "special" ) == 0 )
+            {
+               std::string id = pchild->Attribute( "id" );
+               std::string help_url = pchild->Attribute( "help_url" );
+               if( help_url.size() > 0 )
+               {
+                  helpURL_specials[id] = help_url;
+               }
+            }
+            else
+            {
+               std::cout << "UNKNOWN " << pchild->Value() << std::endl;
+            }
+         }
+      }
+
    }
 }
 
@@ -689,21 +878,21 @@ void SurgeStorage::perform_queued_wtloads()
       {
          if (patch.scene[sc].osc[o].wt.queue_id != -1)
          {
-            load_wt(patch.scene[sc].osc[o].wt.queue_id, &patch.scene[sc].osc[o].wt);
+            load_wt(patch.scene[sc].osc[o].wt.queue_id, &patch.scene[sc].osc[o].wt, &patch.scene[sc].osc[o]);
             patch.scene[sc].osc[o].wt.refresh_display = true;
          }
          else if (patch.scene[sc].osc[o].wt.queue_filename[0])
          {
             patch.scene[sc].osc[o].queue_type = ot_wavetable;
             patch.scene[sc].osc[o].wt.current_id = -1;
-            load_wt(patch.scene[sc].osc[o].wt.queue_filename, &patch.scene[sc].osc[o].wt);
+            load_wt(patch.scene[sc].osc[o].wt.queue_filename, &patch.scene[sc].osc[o].wt, &patch.scene[sc].osc[o]);
             patch.scene[sc].osc[o].wt.refresh_display = true;
          }
       }
    }
 }
 
-void SurgeStorage::load_wt(int id, Wavetable* wt)
+void SurgeStorage::load_wt(int id, Wavetable* wt, OscillatorStorage *osc)
 {
    wt->current_id = id;
    wt->queue_id = -1;
@@ -713,11 +902,32 @@ void SurgeStorage::load_wt(int id, Wavetable* wt)
       return;
    if (!wt)
       return;
-   load_wt(wt_list[id].path.generic_string(), wt);
+
+   load_wt(wt_list[id].path.generic_string(), wt, osc);
+
+   if( osc )
+   {
+      auto n = wt_list.at(id).name;
+      strncpy( osc->wavetable_display_name, n.c_str(), 256 );
+   }
 }
 
-void SurgeStorage::load_wt(string filename, Wavetable* wt)
+void SurgeStorage::load_wt(string filename, Wavetable* wt, OscillatorStorage *osc)
 {
+   if( osc )
+   {
+      char sep = '/';
+#if WINDOWS
+      sep = '\\';
+#endif
+      auto fn = filename.substr(filename.find_last_of(sep) + 1, filename.npos);
+      std::string fnnoext = fn.substr( 0, fn.find_last_of('.' ) );
+      
+      if( fnnoext.length() > 0 )
+      {
+         strncpy( osc->wavetable_display_name, fnnoext.c_str(), 256 );
+      }
+   }
    wt->queue_filename[0] = 0;
    string extension = filename.substr(filename.find_last_of('.'), filename.npos);
    for (unsigned int i = 0; i < extension.length(); i++)
@@ -760,7 +970,9 @@ bool SurgeStorage::load_wt_wt(string filename, Wavetable* wt)
       ds = sizeof(float) * vt_read_int16LE(wh.n_tables) * vt_read_int32LE(wh.n_samples);
 
    data = malloc(ds);
-   fread(data, 1, ds, f);
+   read = fread(data, 1, ds, f);
+   // FIXME - error if read != ds
+   
    CS_WaveTableData.enter();
    bool wasBuilt = wt->BuildWT(data, wh, false);
    CS_WaveTableData.leave();
@@ -976,6 +1188,11 @@ void SurgeStorage::clipboard_paste(int type, int scene, int entry)
          getPatch().param_ptr[pid]->val.i = p.val.i;
          getPatch().param_ptr[pid]->temposync = p.temposync;
          getPatch().param_ptr[pid]->extend_range = p.extend_range;
+         getPatch().param_ptr[pid]->deactivated = p.deactivated;
+         getPatch().param_ptr[pid]->porta_constrate = p.porta_constrate;
+         getPatch().param_ptr[pid]->porta_gliss = p.porta_gliss;
+         getPatch().param_ptr[pid]->porta_retrigger = p.porta_retrigger;
+         getPatch().param_ptr[pid]->porta_curve = p.porta_curve;
       }
 
       switch (type)
@@ -1142,18 +1359,25 @@ void SurgeStorage::init_tables()
 {
    isStandardTuning = true;
    float db60 = powf(10.f, 0.05f * -60.f);
+   float _512th = 1.f / 512.f;
    for (int i = 0; i < 512; i++)
    {
       table_dB[i] = powf(10.f, 0.05f * ((float)i - 384.f));
       table_pitch[i] = powf(2.f, ((float)i - 256.f) * (1.f / 12.f));
+      table_pitch_ignoring_tuning[i] = table_pitch[i];
       table_pitch_inv[i] = 1.f / table_pitch[i];
+      table_pitch_inv_ignoring_tuning[i] = table_pitch_inv[i];
       table_note_omega[0][i] =
           (float)sin(2 * M_PI * min(0.5, 440 * table_pitch[i] * dsamplerate_os_inv));
       table_note_omega[1][i] =
           (float)cos(2 * M_PI * min(0.5, 440 * table_pitch[i] * dsamplerate_os_inv));
+      table_note_omega_ignoring_tuning[0][i] = table_note_omega[0][i];
+      table_note_omega_ignoring_tuning[1][i] = table_note_omega[1][i];
       double k = dsamplerate_os * pow(2.0, (((double)i - 256.0) / 16.0)) / (double)BLOCK_SIZE_OS;
+      table_envrate_linear[i] = (float)(1.f / k);
       table_envrate_lpf[i] = (float)(1.f - exp(log(db60) / k));
-      table_envrate_linear[i] = (float)1.f / k;
+      table_glide_log[i] = log2(1.0 + (i * _512th * 10.f)) / log2(1.f + 10.f);
+      table_glide_exp[511 - i] = 1.0 - table_glide_log[i];
    }
 
    double mult = 1.0 / 32.0;
@@ -1209,6 +1433,30 @@ float SurgeStorage::note_to_pitch_inv(float x)
    return (1 - a) * table_pitch_inv[e & 0x1ff] + a * table_pitch_inv[(e + 1) & 0x1ff];
 }
 
+float SurgeStorage::note_to_pitch_ignoring_tuning(float x)
+{
+   x += 256;
+   int e = (int)x;
+   float a = x - (float)e;
+
+   if (e > 0x1fe)
+      e = 0x1fe;
+
+   return (1 - a) * table_pitch_ignoring_tuning[e & 0x1ff] + a * table_pitch_ignoring_tuning[(e + 1) & 0x1ff];
+}
+
+float SurgeStorage::note_to_pitch_inv_ignoring_tuning(float x)
+{
+   x += 256;
+   int e = (int)x;
+   float a = x - (float)e;
+
+   if (e > 0x1fe)
+      e = 0x1fe;
+
+   return (1 - a) * table_pitch_inv_ignoring_tuning[e & 0x1ff] + a * table_pitch_inv_ignoring_tuning[(e + 1) & 0x1ff];
+}
+
 void SurgeStorage::note_to_omega(float x, float& sinu, float& cosi)
 {
    x += 256;
@@ -1222,6 +1470,21 @@ void SurgeStorage::note_to_omega(float x, float& sinu, float& cosi)
 
    sinu = (1 - a) * table_note_omega[0][e & 0x1ff] + a * table_note_omega[0][(e + 1) & 0x1ff];
    cosi = (1 - a) * table_note_omega[1][e & 0x1ff] + a * table_note_omega[1][(e + 1) & 0x1ff];
+}
+
+void SurgeStorage::note_to_omega_ignoring_tuning(float x, float& sinu, float& cosi)
+{
+   x += 256;
+   int e = (int)x;
+   float a = x - (float)e;
+
+   if (e > 0x1fe)
+      e = 0x1fe;
+   else if (e < 0)
+      e = 0;
+
+   sinu = (1 - a) * table_note_omega_ignoring_tuning[0][e & 0x1ff] + a * table_note_omega_ignoring_tuning[0][(e + 1) & 0x1ff];
+   cosi = (1 - a) * table_note_omega_ignoring_tuning[1][e & 0x1ff] + a * table_note_omega_ignoring_tuning[1][(e + 1) & 0x1ff];
 }
 
 float db_to_linear(float x)
@@ -1279,58 +1542,46 @@ float envelope_rate_linear(float x)
    return (1 - a) * table_envrate_linear[e & 0x1ff] + a * table_envrate_linear[(e + 1) & 0x1ff];
 }
 
-bool SurgeStorage::retuneToScale(const Surge::Storage::Scale& s)
+float envelope_rate_linear_nowrap(float x)
 {
-   if (!s.isValid())
-      return false;
+   x *= 16.f;
+   x += 256.f;
+   int e = limit_range( (int)x, 0, 0x1ff - 1 );;
+   float a = x - (float)e;
 
+   return (1 - a) * table_envrate_linear[e & 0x1ff] + a * table_envrate_linear[(e + 1) & 0x1ff];
+}
+
+// this function is only valid for x = {0, 1}
+float glide_exp(float x)
+{
+   x *= 511.f;
+   int e = (int)x;
+   float a = x - (float)e;
+
+   return (1 - a) * table_glide_exp[e & 0x1ff] + a * table_glide_exp[(e + 1) & 0x1ff];
+}
+
+// this function is only valid for x = {0, 1}
+float glide_log(float x)
+{
+   x *= 511.f;
+   int e = (int)x;
+   float a = x - (float)e;
+
+   return (1 - a) * table_glide_log[e & 0x1ff] + a * table_glide_log[(e + 1) & 0x1ff];
+}
+
+bool SurgeStorage::retuneToScale(const Tunings::Scale& s)
+{
    currentScale = s;
    isStandardTuning = false;
-   
-   float pitches[512];
-   int pos0 = 256 + scaleConstantNote();
-   float pitchMod = log(scaleConstantPitch())/log(2) - 1;
-   pitches[pos0] = 1.0;
-   for (int i=0; i<512; ++i)
-   {
-       int distanceFromScale0 = i - pos0;
-       
-       if( distanceFromScale0 == 0 )
-       {
-       }
-       else 
-       {
-           int rounds = (distanceFromScale0-1) / s.count;
-           int thisRound = (distanceFromScale0-1) % s.count;
 
-           if( thisRound < 0 )
-           {
-               thisRound += s.count;
-               rounds -= 1;
-           }
-           float mul = pow( s.tones[s.count-1].floatValue, rounds);
-           pitches[i] = s.tones[thisRound].floatValue + rounds * (s.tones[s.count - 1].floatValue - 1.0);
-           float otp = table_pitch[i];
-           table_pitch[i] = pow( 2.0, pitches[i] + pitchMod );
-
-#if DEBUG_SCALES
-           if( i > 296 && i < 340 )
-               std::cout << "PITCH: i=" << i << " n=" << i - 256 << " r=" << rounds << " t=" << thisRound
-                         << " p=" << pitches[i]
-                         << " t=" << s.tones[thisRound].floatValue
-                         << " tp=" << table_pitch[i]
-                         << " otp=" << otp
-                         << " diff=" << table_pitch[i] - otp
-                         
-                   //<< " l2p=" << log(otp)/log(2.0)
-                   //<< " l2p-p=" << log(otp)/log(2.0) - pitches[i] - rounds - 3
-                         << std::endl;
-#endif           
-       }
-   }
+   Tunings::Tuning t(currentScale, currentMapping);
    
    for( int i=0; i<512; ++i )
    {
+      table_pitch[i] = t.frequencyForMidiNoteScaledByMidi0( i - 256 );
       table_pitch_inv[i] = 1.f / table_pitch[i];
       table_note_omega[0][i] =
           (float)sin(2 * M_PI * min(0.5, 440 * table_pitch[i] * dsamplerate_os_inv));
@@ -1338,13 +1589,181 @@ bool SurgeStorage::retuneToScale(const Surge::Storage::Scale& s)
           (float)cos(2 * M_PI * min(0.5, 440 * table_pitch[i] * dsamplerate_os_inv));
 
    }
+   
+   return true;
+}
 
+bool SurgeStorage::remapToStandardKeyboard()
+{
+   auto k = Tunings::KeyboardMapping();
+   currentMapping = k;
+   isStandardMapping = true;
+   tuningPitch = 32.0;
+   tuningPitchInv = 1.0 / 32.0;
+   if( isStandardTuning )
+   {
+      retuneToStandardTuning();
+   }
+   else
+   {
+      retuneToScale(currentScale);
+   }
+   return true;
+}
+
+bool SurgeStorage::remapToKeyboard(const Tunings::KeyboardMapping& k)
+{
+   currentMapping = k;
+   isStandardMapping = false;
+
+   tuningPitch = k.tuningFrequency / Tunings::MIDI_0_FREQ;
+   tuningPitchInv = 1.0 / tuningPitch;
+   retuneToScale(currentScale);
    return true;
 }
 
 #if TARGET_LV2
 bool SurgeStorage::skipLoadWtAndPatch = false;
 #endif
+
+void SurgeStorage::rescanUserMidiMappings()
+{
+   userMidiMappingsXMLByName.clear();
+   if( fs::is_directory( fs::path( userMidiMappingsPath ) ) ) {
+      for( auto &d : fs::directory_iterator( fs::path( userMidiMappingsPath ) ) )
+      {
+         auto fn = d.path().generic_string();
+         std::string ending = ".srgmid";
+         if( fn.length() >= ending.length() && ( 0 == fn.compare( fn.length() - ending.length(), ending.length(), ending ) ) )
+         {
+            TiXmlDocument doc;
+            if( ! doc.LoadFile( fn.c_str() ) ) continue;
+            auto r = TINYXML_SAFE_TO_ELEMENT( doc.FirstChild( "surge-midi" ) );
+            if( !r ) continue;
+            if( !r->Attribute( "name" ) ) continue;
+            
+            userMidiMappingsXMLByName[r->Attribute("name")] = doc;
+         }
+      }
+   }
+}
+
+void SurgeStorage::loadMidiMappingByName(std::string name)
+{
+   if( userMidiMappingsXMLByName.find(name) == userMidiMappingsXMLByName.end() )
+   {
+      // FIXME - why would this ever happen? Probably show an error
+      return;
+   }
+
+   auto doc = userMidiMappingsXMLByName[name];
+   auto sm = TINYXML_SAFE_TO_ELEMENT(doc.FirstChild( "surge-midi" ) );
+   // We can do revisio nstuff here later if we need to
+   if( ! sm )
+   {
+      // Invalid XML Document. Show an error?
+      Surge::UserInteractions::promptError( "Unable to locate 'surge-midi' element in XML. Not a valid mid map", "Surge MIDI" );
+      return;
+   }
+
+   auto mc = TINYXML_SAFE_TO_ELEMENT(sm->FirstChild("midictrl"));
+
+   if( mc )
+   {
+      // Clear the current control mapping
+      for (int i = 0; i < n_total_params; i++)
+      {
+         getPatch().param_ptr[i]->midictrl = -1;
+      }
+
+      // Apply the new control mapping
+      
+      auto map = mc->FirstChildElement("map");
+      while( map )
+      {
+         int i, c;
+         if( map->QueryIntAttribute("p", &i ) == TIXML_SUCCESS &&
+             map->QueryIntAttribute( "cc", &c ) == TIXML_SUCCESS )
+         {
+            getPatch().param_ptr[i]->midictrl = c;
+            if( i >= n_global_params )
+            {
+               getPatch().param_ptr[i + n_scene_params]->midictrl = c;
+            }
+         }
+         map = map->NextSiblingElement("map");
+      }
+   }
+
+   auto cc = TINYXML_SAFE_TO_ELEMENT(sm->FirstChild("customctrl"));
+   if( cc )
+   {
+      auto ctrl = cc->FirstChildElement("ctrl" );
+      while( ctrl )
+      {
+         int i, cc;
+         if( ctrl->QueryIntAttribute("i", &i ) == TIXML_SUCCESS &&
+             ctrl->QueryIntAttribute("cc", &cc ) == TIXML_SUCCESS )
+         {
+            controllers[i] = cc;
+         }
+         ctrl = ctrl->NextSiblingElement("ctrl");
+      }
+   }
+}
+
+void SurgeStorage::storeMidiMappingToName(std::string name)
+{
+   TiXmlDocument doc;
+   TiXmlElement sm("surge-midi" );
+   sm.SetAttribute( "revision", ff_revision );
+   sm.SetAttribute( "name", name );
+
+   // Build the XML here
+   int n = n_global_params + n_scene_params; // only store midictrl's for scene A (scene A -> scene
+                                             // B will be duplicated on load)
+   TiXmlElement mc( "midictrl" );
+   for (int i = 0; i < n; i++)
+   {
+      if (getPatch().param_ptr[i]->midictrl >= 0)
+      {
+         TiXmlElement p( "map" );
+         p.SetAttribute( "p", i );
+         p.SetAttribute( "cc", getPatch().param_ptr[i]->midictrl );
+         mc.InsertEndChild( p );
+      }
+   }
+   sm.InsertEndChild(mc);
+
+   TiXmlElement cc( "customctrl" );
+   for (int i=0; i<n_customcontrollers; ++i )
+   {
+      TiXmlElement p( "ctrl" );
+      p.SetAttribute( "i", i );
+      p.SetAttribute( "cc", controllers[i] );
+      cc.InsertEndChild( p );
+   }
+   sm.InsertEndChild(cc);
+
+   doc.InsertEndChild( sm );
+
+   fs::create_directories( userMidiMappingsPath );
+   std::string fn = userMidiMappingsPath +
+#if WINDOWS
+      "\\"
+#else
+      "/"
+#endif
+      + name + ".srgmid";
+
+   if( ! doc.SaveFile( fn.c_str() ) )
+   {
+      std::ostringstream oss;
+      oss << "Unable to save midi settings '" << fn << "'";
+      Surge::UserInteractions::promptError( oss.str(), "Surge MIDI" );
+   }
+}
+
 
 namespace Surge
 {
@@ -1362,6 +1781,96 @@ bool isValidName(const std::string &patchName)
             return false;
 
     return valid;
+}
+
+bool isValidUTF8(const std::string &testThis )
+{
+   int pos = 0;
+   const char* data = testThis.c_str();
+
+   // https://helloacm.com/how-to-validate-utf-8-encoding-the-simple-utf-8-validation-algorithm/
+   // Valid UTF8 has a specific binary format. If it's a single byte UTF8 character, then it is
+   // always of form '0xxxxxxx', where 'x' is any binary digit. If it's a two byte UTF8 character, then it's always of form
+   // '110xxxxx10xxxxxx'. Similarly for three and four byte UTF8 characters it starts with '1110xxxx' and '11110xxx' followed by
+   // '10xxxxxx' one less times as there are bytes. This tool will locate mistakes in the encoding and tell you where they occured.
+
+   //    https://helloacm.com/how-to-validate-utf-8-encoding-the-simple-utf-8-validation-algorithm/
+
+   auto is10x = [](int a) {
+                   int bit1 = (a >> 7) & 1;
+                   int bit2 = (a >> 6) & 1;
+                   return (bit1 == 1) && (bit2 == 0);
+                };
+   size_t dsz = testThis.size();
+   for (int i = 0; i < dsz; ++ i) {
+      // 0xxxxxxx
+      int bit1 = (data[i] >> 7) & 1;
+      if (bit1 == 0) continue;
+      // 110xxxxx 10xxxxxx
+      int bit2 = (data[i] >> 6) & 1;
+      if (bit2 == 0) return false;
+      // 11
+      int bit3 = (data[i] >> 5) & 1;
+      if (bit3 == 0) {
+         // 110xxxxx 10xxxxxx
+         if ((++ i) < dsz) {
+            if (is10x(data[i])) {
+               continue;
+            }
+            return false;
+         } else {
+            return false;
+         }
+      }                        
+      int bit4 = (data[i] >> 4) & 1;
+      if (bit4 == 0) {
+         // 1110xxxx 10xxxxxx 10xxxxxx
+         if (i + 2 < dsz) {
+            if (is10x(data[i + 1]) && is10x(data[i + 2])) {
+               i += 2;
+               continue;
+            }
+            return false;
+         } else {
+            return false;
+         }                
+      }            
+      int bit5 = (data[i] >> 3) & 1;
+      if (bit5 == 1) return false;
+      if (i + 3 < dsz) {
+         if (is10x(data[i + 1]) && is10x(data[i + 2]) && is10x(data[i + 3])) {
+            i += 3;
+            continue;
+         }
+         return false;
+      } else {
+         return false;
+      }                            
+   }
+   return true;
+}
+
+string findReplaceSubstring(string& source, const string& from, const string& to)
+{
+   string newString;
+   newString.reserve(source.length()); // avoids a few memory allocations
+
+   string::size_type lastPos = 0;
+   string::size_type findPos;
+
+   while (string::npos != (findPos = source.find(from, lastPos)))
+   {
+      newString.append(source, lastPos, findPos - lastPos);
+      newString += to;
+      lastPos = findPos + from.length();
+   }
+
+   // care for the rest after last occurrence
+   newString += source.substr(lastPos);
+
+   source.swap(newString);
+
+   return newString;
 }
 
 #if WINDOWS

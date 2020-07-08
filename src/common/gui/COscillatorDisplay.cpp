@@ -1,22 +1,29 @@
-//-------------------------------------------------------------------------------------------------------
-//	Copyright 2005 Claes Johanson & Vember Audio
-//-------------------------------------------------------------------------------------------------------
+/*
+** Surge Synthesizer is Free and Open Source Software
+**
+** Surge is made available under the Gnu General Public License, v3.0
+** https://www.gnu.org/licenses/gpl-3.0.en.html
+**
+** Copyright 2004-2020 by various individuals as described by the Git transaction log
+**
+** All source at: https://github.com/surge-synthesizer/surge.git
+**
+** Surge was a commercial product from 2004-2018, with Copyright and ownership
+** in that period held by Claes Johanson at Vember Audio. Claes made Surge
+** open source in September 2018.
+*/
+
 #include "COscillatorDisplay.h"
 #include "Oscillator.h"
 #include <time.h>
 #include "unitconversion.h"
 #include "UserInteractions.h"
-#if MAC
-#include "filesystem.h"
-#elif LINUX
-#include "experimental/filesystem"
-#else
-#include "filesystem"
-#endif
+#include "guihelpers.h"
+#include "PopupEditorSpawner.h"
+
+#include "ImportFilesystem.h"
 
 using namespace VSTGUI;
-
-namespace fs = std::experimental::filesystem;
 
 const float disp_pitch = 90.15f - 48.f;
 const int wtbheight = 12;
@@ -24,15 +31,6 @@ const int wtbheight = 12;
 extern CFontRef displayFont;
 
 void COscillatorDisplay::draw(CDrawContext* dc)
-{
-#if LINUX
-   drawBitmap(dc);
-#else
-   drawVector(dc);
-#endif
-}
-
-void COscillatorDisplay::drawVector(CDrawContext* dc)
 {
    pdata tp[2][n_scene_params]; // 0 is orange, 1 is blue
    Oscillator* osces[2];
@@ -149,6 +147,33 @@ void COscillatorDisplay::drawVector(CDrawContext* dc)
       if (osc)
       {
          float disp_pitch_rs = disp_pitch + 12.0 * log2(dsamplerate / 44100.0);
+         if(! storage->isStandardTuning )
+         {
+            // OK so in this case we need to find a better version of the note which gets us
+            // that pitch. Sigh.
+            auto pit = storage->note_to_pitch_ignoring_tuning(disp_pitch_rs);
+            int bracket = -1;
+            for( int i=0; i<128; ++i )
+            {
+               if( storage->note_to_pitch(i) < pit && storage->note_to_pitch(i+1) > pit )
+               {
+                  bracket = i;
+                  break;
+               }
+            }
+            if( bracket >= 0 )
+            {
+               float f1 = storage->note_to_pitch(bracket);
+               float f2 = storage->note_to_pitch(bracket+1);
+               float frac = (pit - f1)/ (f2-f1);
+               float newp = storage->note_to_pitch(bracket + frac);
+               disp_pitch_rs = bracket + frac;
+            }
+            else
+            {
+               // What the hell type of scale is this folks! But this is just UI code so just punt
+            }
+         }
          bool use_display = osc->allow_display();
 
          // Mis-install check #2
@@ -236,23 +261,23 @@ void COscillatorDisplay::drawVector(CDrawContext* dc)
          dc->setDrawMode(VSTGUI::kAntiAliasing);
 
          dc->setLineWidth(1.0);
-         dc->setFrameColor(VSTGUI::CColor(90, 90, 90));
+         dc->setFrameColor(skin->getColor( "osc.midline", VSTGUI::CColor(90, 90, 90)) );
          dc->drawLine(mid0, mid1);
 
          dc->setLineWidth(1.0);
-         dc->setFrameColor(VSTGUI::CColor(70, 70, 70));
+         dc->setFrameColor(skin->getColor( "osc.topline", VSTGUI::CColor(70, 70, 70)) );
          dc->drawLine(top0, top1);
          dc->drawLine(bot0, bot1);
 
          // OK so now the label
          if( osces[1] )
          {
-             dc->setFontColor(kWhiteCColor);
-             dc->setFont(displayFont);
-             CPoint lab0(0, valScale * 0.1 - 10);
-             tf.transform(lab0);
-             CRect rlab(lab0, CPoint(10,10) );
-             dc->drawString(olabel.c_str(), rlab, kLeftText, true);
+            dc->setFontColor(skin->getColor( "osc.label", kWhiteCColor) );
+            dc->setFont(displayFont);
+            CPoint lab0(0, valScale * 0.1 - 10);
+            tf.transform(lab0);
+            CRect rlab(lab0, CPoint(10,10) );
+            dc->drawString(olabel.c_str(), rlab, kLeftText, true);
          }
       }
 
@@ -265,7 +290,7 @@ void COscillatorDisplay::drawVector(CDrawContext* dc)
       if (c == 1)
          dc->setFrameColor(VSTGUI::CColor(100, 100, 180, 0xFF));
       else
-         dc->setFrameColor(VSTGUI::CColor(0xFF, 0x90, 0, 0xFF));
+         dc->setFrameColor(skin->getColor( "osc.wave", VSTGUI::CColor(0xFF, 0x90, 0, 0xFF)) );
       
       dc->drawGraphicsPath(path, VSTGUI::CDrawContext::PathDrawMode::kPathStroked, &tpath);
       dc->restoreGlobalState();
@@ -287,7 +312,11 @@ void COscillatorDisplay::drawVector(CDrawContext* dc)
       storage->CS_WaveTableData.enter();
 
       int wtid = oscdata->wt.current_id;
-      if ((wtid >= 0) && (wtid < storage->wt_list.size()))
+      if( oscdata->wavetable_display_name[0] != '\0' )
+      {
+         strcpy(wttxt, oscdata->wavetable_display_name );
+      }
+      else if ((wtid >= 0) && (wtid < storage->wt_list.size()))
       {
          strcpy(wttxt, storage->wt_list.at(wtid).name.c_str());
       }
@@ -306,10 +335,10 @@ void COscillatorDisplay::drawVector(CDrawContext* dc)
       if (r)
          *r = 0;
       // VSTGUI::CColor fgcol = cdisurf->int_to_ccol(coltable[255]);
-      VSTGUI::CColor fgcol = {0xff, 0xA0, 0x10, 0xff};
+      VSTGUI::CColor fgcol = skin->getColor( "osc.wavename.background", VSTGUI::CColor( 0xff, 0xA0, 0x10, 0xff ) );
       dc->setFillColor(fgcol);
       dc->drawRect(rmenu, kDrawFilled);
-      dc->setFontColor(kBlackCColor);
+      dc->setFontColor(skin->getColor( "osc.wavename.foreground", kBlackCColor) );
       dc->setFont(displayFont);
       // strupr(wttxt);
       dc->drawString(wttxt, rmenu, kCenterText, true);
@@ -354,215 +383,6 @@ void COscillatorDisplay::drawVector(CDrawContext* dc)
    setDirty(false);
 }
 
-void COscillatorDisplay::drawBitmap(CDrawContext* dc)
-{
-   pdata tp[n_scene_params];
-   tp[oscdata->pitch.param_id_in_scene].f = 0;
-   for (int i = 0; i < n_osc_params; i++)
-      tp[oscdata->p[i].param_id_in_scene].i = oscdata->p[i].val.i;
-   Oscillator* osc = spawn_osc(oscdata->type.val.i, storage, oscdata, tp);
-
-   cdisurf->begin();
-   cdisurf->clear(0xffffffff);
-
-   int h2 = cdisurf->getHeight();
-   int h = h2;
-   assert(h < 512);
-   if (uses_wavetabledata(oscdata->type.val.i))
-      h -= wtbheight;
-
-   unsigned int column[512];
-   int column_d[512];
-   float lastval = 0;
-   int midline = h >> 1;
-   int topline = midline - 0.4f * h;
-   int bottomline = midline + 0.4f * h;
-   const int aa_bs = 4;
-   const int aa_samples = 1 << aa_bs;
-   int last_imax = -1, last_imin = -1;
-   if (osc)
-   {
-      // srand(2);
-      float disp_pitch_rs = disp_pitch + 12.0 * log2(dsamplerate / 44100.0);
-      bool use_display = osc->allow_display();
-
-      // Mis-install check #2
-      if (uses_wavetabledata(oscdata->type.val.i) && storage->wt_list.size() == 0)
-         use_display = false;
-
-      if (use_display)
-         osc->init(disp_pitch_rs, true);
-      int block_pos = BLOCK_SIZE_OS;
-      for (int y = 0; y < h2; y++)
-         column_d[y] = 0;
-
-      for (int x = 0; x < getWidth(); x++)
-      {
-         for (int y = 0; y < h2; y++)
-            column[y] = 0;
-         for (int s = 0; s < aa_samples; s++)
-         {
-            if (use_display && (block_pos >= BLOCK_SIZE_OS))
-            {
-               if (uses_wavetabledata(oscdata->type.val.i))
-               {
-                  storage->CS_WaveTableData.enter();
-                  osc->process_block(disp_pitch_rs);
-                  block_pos = 0;
-                  storage->CS_WaveTableData.leave();
-               }
-               else
-               {
-                  osc->process_block(disp_pitch_rs);
-                  block_pos = 0;
-               }
-            }
-
-            float val = 0.f;
-            if (use_display)
-               val = -osc->output[block_pos];
-
-            val = (float)((0.5f + 0.4f * val) * h);
-            lastval = val;
-            float v_min = val;
-            float v_max = val;
-
-            v_min = val - 0.5f;
-            v_max = val + 0.5f;
-            int imin = (int)v_min;
-            int imax = (int)v_max;
-            float imax_frac = (v_max - imax);
-            float imin_frac = 1 - (v_min - imin);
-
-            if (imax == imin)
-               imax++;
-
-            if (imin < 0)
-               imin = 0;
-            int dimax = imax, dimin = imin;
-
-            if ((x > 0) || (s > 0))
-            {
-               if (dimin > last_imax)
-                  dimin = last_imax;
-               else if (dimax < last_imin)
-                  dimax = last_imin;
-            }
-            dimin = limit_range(dimin, 0, h - 1);
-            dimax = limit_range(dimax, 0, h - 1);
-
-            // int yp = (int)((float)(size.height() * (-osc->output[block_pos]*0.5+0.5)));
-            // yp = limit_range(yp,0,h-1);
-
-            column[dimin] += ((int)((float)imin_frac * 255.f));
-            column[dimax + 1] += ((int)((float)imax_frac * 255.f));
-            for (int b = (dimin + 1); b < (dimax + 1); b++)
-            {
-               column_d[b & 511] = aa_samples;
-            }
-            last_imax = imax;
-            last_imin = imin;
-            block_pos++;
-            for (int y = 0; y < h; y++)
-            {
-               if (column_d[y] > 0)
-                  column[y] += 256;
-               column_d[y]--;
-            }
-         }
-         column[midline] = max((unsigned int)64 << aa_bs, column[midline]);
-         column[topline] = max((unsigned int)32 << aa_bs, column[topline]);
-         column[bottomline] = max((unsigned int)32 << aa_bs, column[bottomline]);
-         for (int y = 0; y < h2; y++)
-         {
-            cdisurf->setPixel(x, y, coltable[min((unsigned int)255, (column[y] >> aa_bs))]);
-         }
-      }
-      delete osc;
-      // srand( (unsigned)time( NULL ) );
-   }
-   cdisurf->commit();
-   auto size = getViewSize();
-   cdisurf->draw(dc, size);
-
-   if (uses_wavetabledata(oscdata->type.val.i))
-   {
-      CRect wtlbl(size);
-      wtlbl.right -= 1;
-      wtlbl.top = wtlbl.bottom - wtbheight;
-      rmenu = wtlbl;
-      rmenu.inset(14, 0);
-      char wttxt[256];
-
-      storage->CS_WaveTableData.enter();
-
-      int wtid = oscdata->wt.current_id;
-      if ((wtid >= 0) && (wtid < storage->wt_list.size()))
-      {
-         strcpy(wttxt, storage->wt_list.at(wtid).name.c_str());
-      }
-      else if (oscdata->wt.flags & wtf_is_sample)
-      {
-         strcpy(wttxt, "(Patch Sample)");
-      }
-      else
-      {
-         strcpy(wttxt, "(Patch Wavetable)");
-      }
-
-      storage->CS_WaveTableData.leave();
-
-      char* r = strrchr(wttxt, '.');
-      if (r)
-         *r = 0;
-      // VSTGUI::CColor fgcol = cdisurf->int_to_ccol(coltable[255]);
-      VSTGUI::CColor fgcol = {0xff, 0xA0, 0x10, 0xff};
-      dc->setFillColor(fgcol);
-      dc->drawRect(rmenu, kDrawFilled);
-      dc->setFontColor(kBlackCColor);
-      dc->setFont(displayFont);
-      // strupr(wttxt);
-      dc->drawString(wttxt, rmenu, kCenterText, true);
-
-      /*CRect wtlbl_status(size);
-      wtlbl_status.bottom = wtlbl_status.top + wtbheight;
-      dc->setFontColor(kBlackCColor);
-      if(oscdata->wt.flags & wtf_is_sample) dc->drawString("IS
-      SAMPLE",wtlbl_status,false,kRightText);*/
-
-      rnext = wtlbl;
-      rnext.left = rmenu.right; //+ 1;
-      rprev = wtlbl;
-      rprev.right = rmenu.left; //- 1;
-      dc->setFillColor(fgcol);
-      dc->drawRect(rprev, kDrawFilled);
-      dc->drawRect(rnext, kDrawFilled);
-      dc->setFrameColor(kBlackCColor);
-
-      dc->saveGlobalState();
-
-      dc->setDrawMode(kAntiAliasing);
-      dc->setFillColor(kBlackCColor);
-      VSTGUI::CDrawContext::PointList trinext;
-
-      trinext.push_back(VSTGUI::CPoint(134, 170));
-      trinext.push_back(VSTGUI::CPoint(139, 174));
-      trinext.push_back(VSTGUI::CPoint(134, 178));
-      dc->drawPolygon(trinext, kDrawFilled);
-
-      VSTGUI::CDrawContext::PointList triprev;
-
-      triprev.push_back(VSTGUI::CPoint(13, 170));
-      triprev.push_back(VSTGUI::CPoint(8, 174));
-      triprev.push_back(VSTGUI::CPoint(13, 178));
-
-      dc->drawPolygon(triprev, kDrawFilled);
-
-      dc->restoreGlobalState();
-   }
-
-   setDirty(false);
-}
 
 bool COscillatorDisplay::onDrop(VSTGUI::DragEventData data )
 {
@@ -587,9 +407,9 @@ bool COscillatorDisplay::onDrop(VSTGUI::DragEventData data )
          {
             Surge::UserInteractions::promptError(
                 std::string(
-                    "Surge only supports drag-and-drop of .wt or .wav wavetables onto the oscillator. ") +
+                    "Surge only supports drag-and-drop of .wt or .wav wavetables onto the oscillator.") +
                 "You dropped a file with extension " + fPath.extension().generic_string(),
-                "Please drag a valid file type");
+                "Please drag a valid file type!");
          }
          else
          {
@@ -599,8 +419,8 @@ bool COscillatorDisplay::onDrop(VSTGUI::DragEventData data )
       else
       {
          Surge::UserInteractions::promptError(
-             "Surge only supports drag-and-drop of files onto the oscillator",
-             "Please Drag a File");
+             "Surge only supports drag-and-drop of files onto the oscillator.",
+             "Please drop a file!");
       }
    }
 
@@ -688,18 +508,72 @@ void COscillatorDisplay::populateMenu(COptionMenu* contextMenu, int selectedItem
 
    // Add direct open here
    contextMenu->addSeparator();
-   auto actionItem = new CCommandMenuItem(CCommandMenuItem::Desc("Open Wave Table from File..."));
+
+   auto refreshItem = new CCommandMenuItem(CCommandMenuItem::Desc(Surge::UI::toOSCaseForMenu("Refresh Wavetable List")));
+   auto refresh = [this](CCommandMenuItem* item) { this->storage->refresh_wtlist(); };
+   refreshItem->setActions(refresh, nullptr);
+   contextMenu->addEntry(refreshItem);
+
+   contextMenu->addSeparator();
+
+   auto renameItem = new CCommandMenuItem(CCommandMenuItem::Desc(Surge::UI::toOSCaseForMenu("Change Wavetable Display Name..." )));
+   auto rnaction = [this](CCommandMenuItem *item)
+                      {
+                         char c[256];
+                         strncpy( c, this->oscdata->wavetable_display_name, 256 );
+                         spawn_miniedit_text(c, 256, "Enter a custom wavetable display name:", "Wavetable Display Name");
+                         strncpy( this->oscdata->wavetable_display_name, c, 256 );
+                         invalid();
+                      };
+   renameItem->setActions(rnaction, nullptr);
+   contextMenu->addEntry(renameItem);
+   
+   auto actionItem = new CCommandMenuItem(CCommandMenuItem::Desc(Surge::UI::toOSCaseForMenu("Load Wavetable From File...")));
    auto action = [this](CCommandMenuItem* item) { this->loadWavetableFromFile(); };
    actionItem->setActions(action, nullptr);
    contextMenu->addEntry(actionItem);
-   
-   auto contentItem = new CCommandMenuItem(CCommandMenuItem::Desc("Download Additional Content..."));
+
+   auto exportItem = new CCommandMenuItem(CCommandMenuItem::Desc(Surge::UI::toOSCaseForMenu("Save Wavetable to File...")));
+   auto exportAction = [this](CCommandMenuItem *item)
+       {
+          // FIXME - we need to find the scene and osc by iterating (gross).
+          int oscNum = -1;
+          int scene = -1;
+          for( int sc=0;sc<2;sc++ )
+          {
+             auto s = &(storage->getPatch().scene[sc]);
+             for( int o=0;o<n_oscs; ++o )
+             {
+                if( &( s->osc[o] ) == this->oscdata )
+                {
+                   oscNum = o;
+                   scene = sc;
+                }
+             }
+          }
+          if( scene == -1 || oscNum == -1 )
+          {
+             Surge::UserInteractions::promptError( "Unable to determine which oscillator I have data for in export", "Export" );
+          }
+          else
+          {
+             std::string baseName = storage->getPatch().name + "_osc" + std::to_string(oscNum + 1) + "_scene" + (scene == 0 ? "A" : "B" );
+             storage->export_wt_wav_portable( baseName, &( oscdata->wt ) );
+          }
+       };
+   exportItem->setActions(exportAction,nullptr);
+   contextMenu->addEntry(exportItem);
+
+   contextMenu->addSeparator();
+
+   auto contentItem = new CCommandMenuItem(CCommandMenuItem::Desc(Surge::UI::toOSCaseForMenu("Download Additional Content...")));
    auto contentAction = [](CCommandMenuItem *item)
        {
            Surge::UserInteractions::openURL("https://github.com/surge-synthesizer/surge-synthesizer.github.io/wiki/Additional-Content");
        };
    contentItem->setActions(contentAction,nullptr);
    contextMenu->addEntry(contentItem);
+
 }
 
 bool COscillatorDisplay::populateMenuForCategory(COptionMenu* contextMenu,
@@ -793,7 +667,7 @@ void COscillatorDisplay::loadWavetable(int id)
 
 void COscillatorDisplay::loadWavetableFromFile()
 {
-    Surge::UserInteractions::promptFileOpenDialog( "", "", [this](std::string s) {
+    Surge::UserInteractions::promptFileOpenDialog( "", "", "", [this](std::string s) {
             strncpy(this->oscdata->wt.queue_filename, s.c_str(), 255);
 
         } );
@@ -809,6 +683,22 @@ CMouseEventResult COscillatorDisplay::onMouseUp(CPoint& where, const CButtonStat
 }
 CMouseEventResult COscillatorDisplay::onMouseMoved(CPoint& where, const CButtonState& buttons)
 {
+   if ( uses_wavetabledata(oscdata->type.val.i) )
+   {
+      if (rprev.pointInside(where) || rnext.pointInside(where) || rmenu.pointInside(where) )
+      {
+         // getFrame()->setCursor( VSTGUI::kCursorHand );
+      }
+      else
+      {
+         // getFrame()->setCursor( VSTGUI::kCursorDefault );
+      }
+   }
+   else
+   {
+      // getFrame()->setCursor( VSTGUI::kCursorDefault );
+   }
+
    if (controlstate)
    {
       /*oscdata->startphase.val.f -= 0.005f * (where.x - lastpos.x);

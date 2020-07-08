@@ -35,19 +35,33 @@ void FreqshiftEffect::init()
    fi.reset();
    ringout = 10000000;
    setvars(true);
+
+   inithadtempo = true;
+   // See issue #1444 and the fix for this stuff
+   if( storage->temposyncratio_inv == 0 )
+   {
+      inithadtempo = false;
+   }
+
 }
 
 void FreqshiftEffect::setvars(bool init)
 {
+   if( ! inithadtempo && storage->temposyncratio_inv != 0 )
+   {
+      init = true;
+      inithadtempo = true;
+   }
+
    feedback.newValue(amp_to_linear(*f[fsp_feedback]));
 
    if (init)
       time.newValue((fxdata->p[fsp_delay].temposync ? storage->temposyncratio_inv : 1.f) *
-                        samplerate * storage->note_to_pitch(12 * fxdata->p[fsp_delay].val.f) -
+                        samplerate * storage->note_to_pitch_ignoring_tuning(12 * fxdata->p[fsp_delay].val.f) -
                     FIRoffset);
    else
       time.newValue((fxdata->p[fsp_delay].temposync ? storage->temposyncratio_inv : 1.f) *
-                        samplerate * storage->note_to_pitch(12 * *f[fsp_delay]) -
+                        samplerate * storage->note_to_pitch_ignoring_tuning(12 * *f[fsp_delay]) -
                     FIRoffset);
    mix.set_target_smoothed(*f[fsp_mix]);
 
@@ -197,9 +211,9 @@ const char* FreqshiftEffect::group_label(int id)
    case 0:
       return "Shift";
    case 1:
-      return "Parameters";
+      return "Delay";
    case 2:
-      return "Mix";
+      return "Output";
    }
    return 0;
 }
@@ -225,10 +239,10 @@ void FreqshiftEffect::init_ctrltypes()
    fxdata->p[fsp_shift].set_type(ct_freq_shift);
    fxdata->p[fsp_rmult].set_name("Right");
    fxdata->p[fsp_rmult].set_type(ct_percent_bidirectional);
-   fxdata->p[fsp_delay].set_name("Delay");
+   fxdata->p[fsp_delay].set_name("Time");
    fxdata->p[fsp_delay].set_type(ct_envtime);
    fxdata->p[fsp_feedback].set_name("Feedback");
-   fxdata->p[fsp_feedback].set_type(ct_amplitude);
+   fxdata->p[fsp_feedback].set_type(ct_percent);
    fxdata->p[fsp_mix].set_name("Mix");
    fxdata->p[fsp_mix].set_type(ct_percent);
 

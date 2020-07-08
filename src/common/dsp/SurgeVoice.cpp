@@ -1,9 +1,22 @@
-//-------------------------------------------------------------------------------------------------------
-//		Copyright 2005 Claes Johanson & Vember Audio
-//-------------------------------------------------------------------------------------------------------
+/*
+** Surge Synthesizer is Free and Open Source Software
+**
+** Surge is made available under the Gnu General Public License, v3.0
+** https://www.gnu.org/licenses/gpl-3.0.en.html
+**
+** Copyright 2004-2020 by various individuals as described by the Git transaction log
+**
+** All source at: https://github.com/surge-synthesizer/surge.git
+**
+** Surge was a commercial product from 2004-2018, with Copyright and ownership
+** in that period held by Claes Johanson at Vember Audio. Claes made Surge
+** open source in September 2018.
+*/
+
 #include "SurgeVoice.h"
 #include "DspUtilities.h"
 #include "QuadFilterChain.h"
+#include <math.h>
 
 using namespace std;
 
@@ -35,7 +48,10 @@ inline float get1f(__m128 m, int i)
 
 float SurgeVoiceState::getPitch()
 {
-   return key + mainChannelState->pitchBendInSemitones + voiceChannelState->pitchBendInSemitones +
+   /*
+   ** For this commented out section, see the comment on MPE global pitch bend in SurgeSynthesizer::pitchBend
+   */
+   return key + /* mainChannelState->pitchBendInSemitones + */ voiceChannelState->pitchBendInSemitones +
           detune;
 }
 
@@ -90,7 +106,8 @@ SurgeVoice::SurgeVoice(SurgeStorage* storage,
       state.portasrc_key = state.getPitch();
    else
       state.portasrc_key = storage->last_key[scene_id];
-
+   state.priorpkey = state.portasrc_key;
+   
    storage->last_key[scene_id] = key;
    state.portaphase = 0;
    noisegenL[0] = 0.f;
@@ -173,16 +190,31 @@ SurgeVoice::SurgeVoice(SurgeStorage* storage,
    id_fbalance = scene->filter_balance.param_id_in_scene;
    id_feedback = scene->feedback.param_id_in_scene;
 
-   switch_toggled();
    ampEGSource.attack();
    filterEGSource.attack();
-
-   calc_ctrldata<true>(0, 0); // init interpolators
-
-   SetQFB(0, 0); // init Quad-Filterblock parameter interpolators
-
    for (int i = 0; i < 6; i++)
       lfo[i].attack();
+
+   calc_ctrldata<true>(0, 0); // init interpolators
+   SetQFB(0, 0); // init Quad-Filterblock parameter interpolators
+
+   // It is imposrtant that switch_toggled comes last since it creates and activates the
+   // oscillators which need the modulation state set in calc_ctrldata to get sample 0
+   // right.
+   switch_toggled();
+
+   //for (int i = 0; i < 128; i++)
+   //{
+   //   printf("%.7f %.7f %.7f %.7f\n", table_envrate_exp[(i * 4) + 0], table_envrate_exp[(i * 4) + 1],
+   //          table_envrate_exp[(i * 4) + 2], table_envrate_exp[(i * 4) + 3]);
+   //}
+   //printf("\n");
+   //for (int i = 0; i < 128; i++)
+   //{
+   //   printf("%.7f %.7f %.7f %.7f\n", table_envrate_linear[(i * 4) + 0],
+   //          table_envrate_linear[(i * 4) + 1], table_envrate_linear[(i * 4) + 2],
+   //          table_envrate_linear[(i * 4) + 3]);
+   //}
 }
 
 SurgeVoice::~SurgeVoice()
@@ -195,8 +227,33 @@ void SurgeVoice::legato(int key, int velocity, char detune)
       state.portasrc_key = state.getPitch();
    else
    {
-      state.portasrc_key =
-          ((1 - state.portaphase) * state.portasrc_key + state.portaphase * state.getPitch());
+      // exponential or linear key traversal for the portamento
+      float phase;
+      switch (scene->portamento.porta_curve)
+      {
+      case porta_log:
+         phase = glide_log(state.portaphase);
+         break;
+      case porta_lin:
+         phase = state.portaphase;
+         break;
+      case porta_exp:
+         phase = glide_exp(state.portaphase);
+         break;
+      }
+
+      state.portasrc_key = ((1 - phase) * state.portasrc_key + phase * state.getPitch());
+      
+      if (scene->portamento.porta_gliss) // quantize portamento to keys
+         state.pkey = floor(state.pkey + 0.5);
+
+      state.porta_doretrigger = false;
+      if (scene->portamento.porta_retrigger)
+         if( floor( state.pkey + 0.5 ) != state.priorpkey )
+         {
+            state.priorpkey = floor( state.pkey + 0.5 );
+            state.porta_doretrigger = true;
+         }
    }
 
    state.key = key;
@@ -226,7 +283,9 @@ void SurgeVoice::switch_toggled()
       {
          osc[i].reset(spawn_osc(scene->osc[i].type.val.i, storage, &scene->osc[i], localcopy));
          if (osc[i])
+         {
             osc[i]->init(state.pitch);
+         }
          osctype[i] = scene->osc[i].type.val.i;
       }
    }
@@ -323,15 +382,48 @@ void SurgeVoice::uber_release()
 
 void SurgeVoice::update_portamento()
 {
-   // float ratemult=1;
-   // if(zone->portamento_mode) ratemult = 12/(0.00001+fabs(key-portasrc_key));
+   float const_rate_factor = 1.0;
+   int quantStep = 12;
+   
+   if (!storage->isStandardTuning && storage->currentScale.count > 1)
+      quantStep = storage->currentScale.count;
+
+   // portamento constant rate mode (multiply portamento time with every octave traversed (or scale length in case of microtuning)
+   if (scene->portamento.porta_constrate)
+      const_rate_factor = (1.f / ((1.f / quantStep) * fabs(state.getPitch() - state.portasrc_key) + 0.00001));
+
    state.portaphase += envelope_rate_linear(localcopy[scene->portamento.param_id_in_scene].f) *
-                       (scene->portamento.temposync ? storage->temposyncratio : 1.f);
-   // powf(2,-zone->portamento)
+                           (scene->portamento.temposync ? storage->temposyncratio : 1.f) * const_rate_factor;
+
    if (state.portaphase < 1)
    {
-      state.pkey = (1.f - state.portaphase) * state.portasrc_key +
-                   (float)state.portaphase * state.getPitch();
+      // exponential or linear key traversal for the portamento
+      float phase;
+      switch (scene->portamento.porta_curve)
+      {
+      case porta_log:
+         phase = glide_log(state.portaphase);
+         break;
+      case porta_lin:
+         phase = state.portaphase;
+         break;
+      case porta_exp:
+         phase = glide_exp(state.portaphase);
+         break;
+      }
+
+      state.pkey = (1.f - phase) * state.portasrc_key + (float)phase * state.getPitch();
+
+      if (scene->portamento.porta_gliss)    // quantize portamento to keys
+         state.pkey = floor(state.pkey + 0.5);
+
+      state.porta_doretrigger = false;
+      if (scene->portamento.porta_retrigger)
+         if( floor( state.pkey + 0.5 ) != state.priorpkey )
+         {
+            state.priorpkey = floor( state.pkey + 0.5 );
+            state.porta_doretrigger = true;
+         }
    }
    else
       state.pkey = state.getPitch();
@@ -362,10 +454,16 @@ template <bool first> void SurgeVoice::calc_ctrldata(QuadFilterChainState* Q, in
          lfo[i].process_block();
    }
 
-   if (lfo[0].retrigger_EG)
+   for( int i=0; i<6; ++i )
    {
-      ((AdsrEnvelope*)modsources[ms_ampeg])->retrigger();
-      ((AdsrEnvelope*)modsources[ms_filtereg])->retrigger();
+      if (lfo[i].retrigger_AEG)
+      {
+         ((AdsrEnvelope*)modsources[ms_ampeg])->retrigger();
+      }
+      if (lfo[i].retrigger_FEG)
+      {
+         ((AdsrEnvelope*)modsources[ms_filtereg])->retrigger();
+      }
    }
 
    modsources[ms_aftertouch]->output = state.voiceChannelState->pressure;
@@ -422,17 +520,28 @@ template <bool first> void SurgeVoice::calc_ctrldata(QuadFilterChainState* Q, in
    }
 
    update_portamento();
+   if( state.porta_doretrigger )
+   {
+      state.porta_doretrigger = false;
+      ((AdsrEnvelope*)modsources[ms_ampeg])->retrigger();
+      ((AdsrEnvelope*)modsources[ms_filtereg])->retrigger();
+   }
+
    float pb = modsources[ms_pitchbend]->output;
    if (pb > 0)
       pb *= (float)scene->pbrange_up.val.i;
    else
       pb *= (float)scene->pbrange_dn.val.i;
 
+   octaveSize = 12.0f;
+   if( ! storage->isStandardTuning )
+      octaveSize = storage->currentScale.count;
+   
    state.pitch = state.pkey + pb +
                  localcopy[pitch_id].f * (scene->pitch.extend_range ? 12.f : 1.f) +
-                 (12.0f * localcopy[octave_id].i);
+                 (octaveSize * localcopy[octave_id].i);
    modsources[ms_keytrack]->output =
-       (state.pitch - (float)scene->keytrack_root.val.i) * (1.0f / 12.0f);
+      (state.pitch - (float)scene->keytrack_root.val.i) * (1.0f / 12.0f); // I didn't change this for octaveSize, I think rightly
 
    if (scene->modsource_doprocess[ms_polyaftertouch])
    {
@@ -530,7 +639,7 @@ bool SurgeVoice::process_block(QuadFilterChainState& Q, int Qe)
        (osc1 && (FMmode == fm_2and3to1)))
    {
        osc[2]->process_block(noteShiftFromPitchParam( (scene->osc[2].keytrack.val.b ? state.pitch : ktrkroot) +
-                                                      12 * scene->osc[2].octave.val.i,
+                                                      octaveSize *  scene->osc[2].octave.val.i,
                                                       2 ),
                             drift, is_wide);
 
@@ -557,7 +666,7 @@ bool SurgeVoice::process_block(QuadFilterChainState& Q, int Qe)
       if (FMmode == fm_3to2to1)
       {
           osc[1]->process_block(noteShiftFromPitchParam((scene->osc[1].keytrack.val.b ? state.pitch : ktrkroot) +
-                                                        12 * scene->osc[1].octave.val.i,
+                                                        octaveSize *  scene->osc[1].octave.val.i,
                                                         1 ),
                                
                                drift, is_wide, true,
@@ -566,7 +675,7 @@ bool SurgeVoice::process_block(QuadFilterChainState& Q, int Qe)
       else
       {
           osc[1]->process_block(noteShiftFromPitchParam((scene->osc[1].keytrack.val.b ? state.pitch : ktrkroot) +
-                                                        12 * scene->osc[1].octave.val.i,
+                                                        octaveSize *  scene->osc[1].octave.val.i,
                                                         1),
                                drift, is_wide);
       }
@@ -595,14 +704,14 @@ bool SurgeVoice::process_block(QuadFilterChainState& Q, int Qe)
       {
          add_block(osc[1]->output, osc[2]->output, fmbuffer, BLOCK_SIZE_OS_QUAD);
          osc[0]->process_block(noteShiftFromPitchParam((scene->osc[0].keytrack.val.b ? state.pitch : ktrkroot) +
-                                                       12 * scene->osc[0].octave.val.i, 0 ),
+                                                       octaveSize *  scene->osc[0].octave.val.i, 0 ),
                                drift, is_wide, true,
                                db_to_linear(localcopy[scene->fm_depth.param_id_in_scene].f));
       }
       else if (FMmode)
       {
           osc[0]->process_block(noteShiftFromPitchParam((scene->osc[0].keytrack.val.b ? state.pitch : 60) +
-                                                        12 * scene->osc[0].octave.val.i,
+                                                        octaveSize *  scene->osc[0].octave.val.i,
                                                         0),
 
                                drift, is_wide, true,
@@ -611,7 +720,7 @@ bool SurgeVoice::process_block(QuadFilterChainState& Q, int Qe)
       else
       {
          osc[0]->process_block(noteShiftFromPitchParam((scene->osc[0].keytrack.val.b ? state.pitch : ktrkroot) +
-                                                       12 * scene->osc[0].octave.val.i,
+                                                       octaveSize *  scene->osc[0].octave.val.i,
                                                        0),
                                drift, is_wide);
       }

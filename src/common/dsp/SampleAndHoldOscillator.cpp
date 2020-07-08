@@ -1,6 +1,18 @@
-//-------------------------------------------------------------------------------------------------------
-//	Copyright 2005 Claes Johanson & Vember Audio
-//-------------------------------------------------------------------------------------------------------
+/*
+** Surge Synthesizer is Free and Open Source Software
+**
+** Surge is made available under the Gnu General Public License, v3.0
+** https://www.gnu.org/licenses/gpl-3.0.en.html
+**
+** Copyright 2004-2020 by various individuals as described by the Git transaction log
+**
+** All source at: https://github.com/surge-synthesizer/surge.git
+**
+** Surge was a commercial product from 2004-2018, with Copyright and ownership
+** in that period held by Claes Johanson at Vember Audio. Claes made Surge
+** open source in September 2018.
+*/
+
 #include "Oscillator.h"
 #include "DspUtilities.h"
 
@@ -20,7 +32,7 @@ const float hpf_cycle_loss = 0.995f;
 SampleAndHoldOscillator::SampleAndHoldOscillator(SurgeStorage* storage,
                                                  OscillatorStorage* oscdata,
                                                  pdata* localcopy)
-    : AbstractBlitOscillator(storage, oscdata, localcopy)
+    : AbstractBlitOscillator(storage, oscdata, localcopy), lp(storage), hp(storage)
 {}
 
 SampleAndHoldOscillator::~SampleAndHoldOscillator()
@@ -78,7 +90,7 @@ void SampleAndHoldOscillator::init(float pitch, bool is_display)
       else
       {
          double drand = (double)rand() / RAND_MAX;
-         double detune = localcopy[id_detune].f * (detune_bias * float(i) + detune_offset);
+         double detune = oscdata->p[5].get_extended(localcopy[id_detune].f) * (detune_bias * float(i) + detune_offset);
          // double t = drand * max(2.0,dsamplerate_os / (16.35159783 *
          // pow((double)1.05946309435,(double)pitch)));
          double st = drand * storage->note_to_pitch_tuningctr(detune) * 0.5;
@@ -93,6 +105,12 @@ void SampleAndHoldOscillator::init(float pitch, bool is_display)
       driftlfo2[i] = 0.f;
       driftlfo[i] = 0.f;
    }
+
+   hp.coeff_instantize();
+   lp.coeff_instantize();
+
+   hp.coeff_HP(hp.calc_omega(oscdata->p[2].val.f / 12.0) / OSC_OVERSAMPLING, 0.707);
+   lp.coeff_LP2B(lp.calc_omega(oscdata->p[3].val.f / 12.0) / OSC_OVERSAMPLING, 0.707);
 }
 
 void SampleAndHoldOscillator::init_ctrltypes()
@@ -102,23 +120,25 @@ void SampleAndHoldOscillator::init_ctrltypes()
    oscdata->p[1].set_name("Width");
    oscdata->p[1].set_type(ct_percent);
    oscdata->p[1].val_default.f = 0.5f;
-   oscdata->p[2].set_name("-");
-   oscdata->p[2].set_type(ct_none);
-   oscdata->p[3].set_name("-");
-   oscdata->p[3].set_type(ct_none);
+   oscdata->p[2].set_name("Low Cut");
+   oscdata->p[2].set_type(ct_freq_audible_deactivatable);
+   oscdata->p[3].set_name("High Cut");
+   oscdata->p[3].set_type(ct_freq_audible_deactivatable);
    oscdata->p[4].set_name("Sync");
    oscdata->p[4].set_type(ct_syncpitch);
-   oscdata->p[5].set_name("Uni Spread");
+   oscdata->p[5].set_name("Unison Detune");
    oscdata->p[5].set_type(ct_oscspread);
-   oscdata->p[6].set_name("Uni Count");
+   oscdata->p[6].set_name("Unison Voices");
    oscdata->p[6].set_type(ct_osccount);
 }
 void SampleAndHoldOscillator::init_default_values()
 {
    oscdata->p[0].val.f = 0.f;
    oscdata->p[1].val.f = 0.5f;
-   oscdata->p[2].val.f = 0.f;
-   oscdata->p[3].val.f = 0.f;
+   oscdata->p[2].val.f = oscdata->p[2].val_min.f; // high cut at the bottom
+   oscdata->p[2].deactivated = true;
+   oscdata->p[3].val.f = oscdata->p[3].val_max.f; // low cut at the top
+   oscdata->p[4].deactivated = true;
    oscdata->p[4].val.f = 0.f;
    oscdata->p[5].val.f = 0.2f;
    oscdata->p[6].val.i = 1;
@@ -128,7 +148,7 @@ void SampleAndHoldOscillator::convolute(int voice, bool FM, bool stereo)
 {
    float detune = drift * driftlfo[voice];
    if (n_unison > 1)
-      detune += localcopy[id_detune].f * (detune_bias * float(voice) + detune_offset);
+      detune += oscdata->p[5].get_extended(localcopy[id_detune].f) * (detune_bias * float(voice) + detune_offset);
 
    float sub = l_sub.v;
 
@@ -164,7 +184,11 @@ void SampleAndHoldOscillator::convolute(int voice, bool FM, bool stereo)
    // add time until next statechange
    float t;
    if (oscdata->p[5].absolute)
-       t = storage->note_to_pitch_inv_tuningctr(detune * pitchmult_inv * (1.f / 440.f) + l_sync.v);
+   {
+      // see the comment in SurgeSuperOscillator in the absolute branch
+      t = storage->note_to_pitch_inv_ignoring_tuning( detune * storage->note_to_pitch_inv_ignoring_tuning( pitch ) * 16 / 0.9443 );
+      if( t < 0.1 ) t = 0.1;
+   }
    else
        t = storage->note_to_pitch_inv_tuningctr(detune + l_sync.v);
 
@@ -242,6 +266,22 @@ void SampleAndHoldOscillator::convolute(int voice, bool FM, bool stereo)
    oscstate[voice] += rate[voice];
    oscstate[voice] = max(0.f, oscstate[voice]);
    state[voice] = (state[voice] + 1) & 1;
+}
+
+void SampleAndHoldOscillator::applyFilter()
+{
+   if (!oscdata->p[2].deactivated)
+      hp.coeff_HP(hp.calc_omega(localcopy[oscdata->p[2].param_id_in_scene].f / 12.0) / OSC_OVERSAMPLING, 0.707);
+   if (!oscdata->p[3].deactivated)
+      lp.coeff_LP2B(lp.calc_omega(localcopy[oscdata->p[3].param_id_in_scene].f / 12.0) / OSC_OVERSAMPLING, 0.707);
+
+   for (int k = 0; k < BLOCK_SIZE_OS; k += BLOCK_SIZE)
+   {
+      if (!oscdata->p[2].deactivated)
+         hp.process_block(&(output[k]), &(outputR[k]));
+      if (!oscdata->p[3].deactivated)
+         lp.process_block(&(output[k]), &(outputR[k]));
+   }
 }
 
 template <bool is_init> void SampleAndHoldOscillator::update_lagvals()
@@ -385,5 +425,18 @@ void SampleAndHoldOscillator::process_block(
             _mm_store_ps(&oscbufferR[OB_LENGTH + k], zero);
          }
       }
+   }
+
+   applyFilter();
+}
+
+void SampleAndHoldOscillator::handleStreamingMismatches(int streamingRevision, int currentSynthStreamingRevision)
+{
+   if( streamingRevision <= 12 )
+   {
+      oscdata->p[2].val.f = oscdata->p[2].val_min.f; // high cut at the bottom
+      oscdata->p[2].deactivated = true;
+      oscdata->p[3].val.f = oscdata->p[3].val_max.f; // low cut at the top
+      oscdata->p[4].deactivated = true;
    }
 }

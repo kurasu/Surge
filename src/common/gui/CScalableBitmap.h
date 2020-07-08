@@ -9,6 +9,7 @@
 
 #include <vector>
 #include <map>
+#include <atomic>
 
 #include "nanosvg.h"
 
@@ -16,6 +17,8 @@ class CScalableBitmap : public VSTGUI::CBitmap
 {
 public:
    CScalableBitmap(VSTGUI::CResourceDescription d, VSTGUI::CFrame* f);
+   CScalableBitmap(std::string fname, VSTGUI::CFrame* f);
+   ~CScalableBitmap();
 
    virtual void draw(VSTGUI::CDrawContext* context,
                      const VSTGUI::CRect& rect,
@@ -47,6 +50,9 @@ public:
       extraScaleFactor = a;
    }
 
+   int resourceID;
+   std::string fname;
+
 private:
    struct CPointCompare
    {
@@ -59,10 +65,10 @@ private:
    };
 
    std::map<VSTGUI::CPoint, VSTGUI::CBitmap*, CPointCompare> offscreenCache;
-
+   static std::atomic<int> instances;
+   
    int lastSeenZoom, bestFitScaleGroup;
    int extraScaleFactor;
-   int resourceID;
 
    VSTGUI::CFrame* frame;
 

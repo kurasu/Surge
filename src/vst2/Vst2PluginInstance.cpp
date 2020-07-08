@@ -1,6 +1,18 @@
-//-------------------------------------------------------------------------------------------------------
-//	Copyright 2005 Claes Johanson & Vember Audio
-//-------------------------------------------------------------------------------------------------------
+/*
+** Surge Synthesizer is Free and Open Source Software
+**
+** Surge is made available under the Gnu General Public License, v3.0
+** https://www.gnu.org/licenses/gpl-3.0.en.html
+**
+** Copyright 2004-2020 by various individuals as described by the Git transaction log
+**
+** All source at: https://github.com/surge-synthesizer/surge.git
+**
+** Surge was a commercial product from 2004-2018, with Copyright and ownership
+** in that period held by Claes Johanson at Vember Audio. Claes made Surge
+** open source in September 2018.
+*/
+
 #include "globals.h"
 #include "Vst2PluginInstance.h"
 #include "SurgeSynthesizer.h"
@@ -10,6 +22,7 @@
 #include <float.h>
 #include "public.sdk/source/vst2.x/aeffeditor.h"
 #include "public.sdk/source/vst2.x/audioeffectx.h"
+#include "version.h"
 
 #if MAC
 #include <fenv.h>
@@ -38,7 +51,7 @@ Vst2PluginInstance::Vst2PluginInstance(audioMasterCallback audioMaster)
     : AudioEffectX(audioMaster, 1, n_total_params + n_customcontrollers)
 {
    setNumInputs(2);  // stereo in
-   setNumOutputs(2); // stereo out
+   setNumOutputs(6); // stereo out, scene A out, scene B out
 
 #if MAC || LINUX
    isSynth();
@@ -187,7 +200,7 @@ VstInt32 Vst2PluginInstance::canDo(char* text)
    if (!strcmp(text, "midiProgramNames"))
       return -1;
 
-   if (!strcmp(text, "2in2out"))
+   if (!strcmp(text, "2in6out"))
       return 1;
 
    if (!strcmp(text, "plugAsChannelInsert"))
@@ -357,19 +370,19 @@ void Vst2PluginInstance::getParameterLabel(VstInt32 index, char* label)
 
 bool Vst2PluginInstance::getEffectName(char* name)
 {
-   strcpy(name, "Surge");
+   strcpy(name, stringProductName);
    return true;
 }
 
 bool Vst2PluginInstance::getProductString(char* name)
 {
-   strcpy(name, "Surge");
+   strcpy(name, stringProductName);
    return true;
 }
 
 bool Vst2PluginInstance::getVendorString(char* text)
 {
-   strcpy(text, "Vember Audio");
+   strcpy(text, stringCompanyName);
    return true;
 }
 
@@ -394,6 +407,11 @@ void Vst2PluginInstance::processT(float** inputs, float** outputs, VstInt32 samp
       {
          if (timeinfo->flags & kVstPpqPosValid)
             _instance->time_data.ppqPos = timeinfo->ppqPos;
+      }
+      if (timeinfo->flags & kVstTimeSigValid )
+      {
+         _instance->time_data.timeSigNumerator = timeinfo->timeSigNumerator;
+         _instance->time_data.timeSigDenominator = timeinfo->timeSigDenominator;
       }
    }
    else
@@ -442,9 +460,17 @@ void Vst2PluginInstance::processT(float** inputs, float** outputs, VstInt32 samp
       for (outp = 0; outp < n_outputs; outp++)
       {
          if (replacing)
-            outputs[outp][i] = (float)_instance->output[outp][blockpos]; // replacing
-         else
-            outputs[outp][i] += (float)_instance->output[outp][blockpos]; // adding
+         {
+            outputs[outp][i] = (float)_instance->output[outp][blockpos];
+            outputs[2 + outp][i] = (float)_instance->sceneout[0][outp][blockpos];
+            outputs[4 + outp][i] = (float)_instance->sceneout[1][outp][blockpos];
+         }
+         else  // adding
+         {
+            outputs[outp][i] += (float)_instance->output[outp][blockpos]; 
+            outputs[2 + outp][i] += (float)_instance->sceneout[0][outp][blockpos];
+            outputs[4 + outp][i] += (float)_instance->sceneout[1][outp][blockpos];
+         }
       }
 
       blockpos++;
@@ -474,9 +500,29 @@ void Vst2PluginInstance::processReplacing(float** inputs, float** outputs, VstIn
 
 bool Vst2PluginInstance::getOutputProperties(VstInt32 index, VstPinProperties* properties)
 {
-   if (index < 2)
+   if (index < 6)
    {
-      sprintf(properties->label, "SURGE"); // , (index & 0xfe) + 1, (index & 0xfe) + 2);
+   	  switch (index)
+   	  {
+   	     case 0:
+            sprintf(properties->label, "Audio Out L");
+            break;
+   	     case 1:
+            sprintf(properties->label, "Audio Out R");
+            break;
+   	     case 2:
+            sprintf(properties->label, "Scene A Out L");
+            break;
+   	     case 3:
+            sprintf(properties->label, "Scene A Out R");
+            break;
+   	     case 4:
+            sprintf(properties->label, "Scene B Out L");
+            break;
+   	     case 5:
+            sprintf(properties->label, "Scene B Out R");
+            break;
+   	  }
       properties->flags = kVstPinIsStereo | kVstPinIsActive;
       return true;
    }
@@ -488,7 +534,10 @@ bool Vst2PluginInstance::getInputProperties(VstInt32 index, VstPinProperties* pr
    bool returnCode = false;
    if (index < 2)
    {
-      sprintf(properties->label, "SURGE in");
+   	  if (index == 0)
+         sprintf(properties->label, "Audio In L");
+      else
+         sprintf(properties->label, "Audio In R");
       properties->flags = kVstPinIsStereo | kVstPinIsActive;
       returnCode = true;
    }
@@ -567,6 +616,8 @@ bool Vst2PluginInstance::tryInit()
       std::unique_ptr<SurgeGUIEditor> editorTmp(new SurgeGUIEditor(this, synthTmp.get()));
 
       _instance = synthTmp.release();
+      _instance->audio_processing_active = true;
+
       editor = editorTmp.release();
    } catch (std::bad_alloc err) {
       Surge::UserInteractions::promptError(err.what(), "Out of memory");
@@ -579,7 +630,7 @@ bool Vst2PluginInstance::tryInit()
    }
 
    static_cast<SurgeGUIEditor *>(editor)->setZoomCallback( [this](SurgeGUIEditor *e) { handleZoom(e); } );
-   
+
    blockpos = 0;
    state = INITIALIZED;
    return true;
@@ -603,13 +654,13 @@ void Vst2PluginInstance::handleZoom(SurgeGUIEditor *e)
         ** drifts accumulate, just reset the size here since we know it
         */
         frame->setSize(newW, newH);
-        
+
         /*
         ** VST2 has an error which is that the background bitmap doesn't get the frame transform
         ** applied. Simply look at cviewcontainer::drawBackgroundRect. So we have to force the background
         ** scale up using a backdoor API.
         */
-       
+
         VSTGUI::CBitmap *bg = frame->getBackground();
         if(bg != NULL)
         {

@@ -297,6 +297,7 @@ ComponentResult aulayer::GetProperty(AudioUnitPropertyID iID, AudioUnitScope iSc
                 if( editor_instance == NULL )
                 {
                     editor_instance = new SurgeGUIEditor( this, plugin_instance );
+                    editor_instance->loadFromDAWExtraState(plugin_instance);
                 }
                 void** pThis = (void**)(outData);
                 *pThis = (void*)editor_instance;
@@ -333,3 +334,14 @@ ComponentResult aulayer::GetProperty(AudioUnitPropertyID iID, AudioUnitScope iSc
     return AUInstrumentBase::GetProperty(iID, iScope, iElem, outData);
 }
 
+
+void aulayer::setPresetByID( int pid )
+{
+    AUPreset preset;
+    preset.presetNumber = pid;
+    preset.presetName = CFStringCreateWithCString(NULL,plugin_instance->storage.patch_list[pid].name.c_str(),
+                                                  kCFStringEncodingUTF8);
+    SetAFactoryPresetAsCurrent(preset);
+    PropertyChanged(kAudioUnitProperty_CurrentPreset, kAudioUnitScope_Global, 0 );
+    PropertyChanged(kAudioUnitProperty_PresentPreset, kAudioUnitScope_Global, 0 );
+}

@@ -14,12 +14,17 @@ namespace Headless
 
 playerEvents_t makeHoldMiddleC(int forSamples, int withTail)
 {
+   return makeHoldNoteFor(60, forSamples, withTail );
+}
+
+playerEvents_t makeHoldNoteFor( int note, int forSamples, int withTail, int midiChannel )
+{
    playerEvents_t result;
 
    Event on;
    on.type = Event::NOTE_ON;
-   on.channel = 0;
-   on.data1 = 60;
+   on.channel = midiChannel;
+   on.data1 = note;
    on.data2 = 100;
    on.atSample = 0;
 
@@ -68,7 +73,7 @@ playerEvents_t make120BPMCMajorQuarterNoteScale(long s0, int sr)
    return result;
 }
 
-void playAsConfigured(SurgeSynthesizer* surge,
+void playAsConfigured(std::shared_ptr<SurgeSynthesizer> surge,
                       const playerEvents_t& events,
                       float** data,
                       int* nSamples,
@@ -98,10 +103,20 @@ void playAsConfigured(SurgeSynthesizer* surge,
       while (currEvt < events.size() && events[currEvt].atSample <= cs + BLOCK_SIZE - 1)
       {
          Event e = events[currEvt];
-         if (e.type == Event::NOTE_ON)
+         switch( e.type )
+         {
+         case Event::NOTE_ON:
             surge->playNote(e.channel, e.data1, e.data2, 0);
-         if (e.type == Event::NOTE_OFF)
+            break;
+         case Event::NOTE_OFF:
             surge->releaseNote(e.channel, e.data1, e.data2);
+            break;
+         case Event::LAMBDA_EVENT:
+            e.surgeLambda(surge);
+            break;
+         case Event::NO_EVENT:
+            break;
+         }
 
          currEvt++;
       }
@@ -117,7 +132,7 @@ void playAsConfigured(SurgeSynthesizer* surge,
    }
 }
 
-void playOnPatch(SurgeSynthesizer* surge,
+void playOnPatch(std::shared_ptr<SurgeSynthesizer> surge,
                  int patch,
                  const playerEvents_t& events,
                  float** data,
@@ -129,7 +144,7 @@ void playOnPatch(SurgeSynthesizer* surge,
 }
 
 void playOnEveryPatch(
-    SurgeSynthesizer* surge,
+    std::shared_ptr<SurgeSynthesizer> surge,
     const playerEvents_t& events,
     std::function<void(
         const Patch& p, const PatchCategory& c, const float* data, int nSamples, int nChannels)> cb)
@@ -160,7 +175,34 @@ void playOnEveryPatch(
    }
 }
 
-void playMidiFile(SurgeSynthesizer* synth,
+void playOnNRandomPatches(
+    std::shared_ptr<SurgeSynthesizer> surge,
+    const playerEvents_t& events,
+    int nPlays,
+    std::function<void(
+        const Patch& p, const PatchCategory& c, const float* data, int nSamples, int nChannels)> cb)
+{
+   int nPresets = surge->storage.patch_list.size();
+   int nCats = surge->storage.patch_category.size();
+
+   for (auto i = 0; i < nPlays; ++i)
+   {
+      int rp = (int)( 1.0 * rand() / RAND_MAX * ( surge->storage.patch_list.size() - 1 ) );
+      Patch p = surge->storage.patch_list[rp];
+      PatchCategory pc = surge->storage.patch_category[p.category];
+
+      float* data = NULL;
+      int nSamples, nChannels;
+
+      playOnPatch(surge, i, events, &data, &nSamples, &nChannels);
+      cb(p, pc, data, nSamples, nChannels);
+      
+      if (data)
+         delete[] data;
+   }
+}
+
+void playMidiFile(std::shared_ptr<SurgeSynthesizer> synth,
                   std::string midiFileName,
                   long callBackEvery,
                   std::function<void(float* data, int nSamples, int nChannels)> dataCB)
@@ -230,7 +272,7 @@ void playMidiFile(SurgeSynthesizer* synth,
 #endif
 }
 
-void renderMidiFileToWav(SurgeSynthesizer* surge,
+void renderMidiFileToWav(std::shared_ptr<SurgeSynthesizer> surge,
                          std::string midiFileName,
                          std::string outputWavFile)
 {

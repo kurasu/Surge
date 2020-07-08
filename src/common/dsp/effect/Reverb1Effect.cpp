@@ -225,11 +225,13 @@ void Reverb1Effect::process(float* dataL, float* dataR)
    mix.set_target_smoothed(*f[rp_mix]);
    width.set_target_smoothed(db_to_linear(*f[rp_width]));
 
-   int pdtime = (int)(float)samplerate * storage->note_to_pitch(12 * *f[rp_predelay]) *
+   int pdtime = (int)(float)samplerate * storage->note_to_pitch_ignoring_tuning(12 * *f[rp_predelay]) *
                 (fxdata->p[rp_predelay].temposync ? storage->temposyncratio_inv : 1.f);
 
    const __m128 one4 = _mm_set1_ps(1.f);
-   __m128 damp4 = _mm_load1_ps(f[rp_damping]);
+   float dv = *(f[rp_damping]);
+   dv = limit_range( dv, 0.01f, 0.99f ); // this is a simple onepole damper, w * y[n] + ( 1-w ) y[n-1] so to be stable has to stay in range
+   __m128 damp4 = _mm_load1_ps(&dv);
    __m128 damp4m1 = _mm_sub_ps(one4, damp4);
 
    for (int k = 0; k < BLOCK_SIZE; k++)
@@ -319,7 +321,7 @@ const char* Reverb1Effect::group_label(int id)
    case 2:
       return "EQ";
    case 3:
-      return "Mix";
+      return "Output";
    }
    return 0;
 }
@@ -355,14 +357,14 @@ void Reverb1Effect::init_ctrltypes()
    fxdata->p[rp_roomsize].modulateable = false;
    fxdata->p[rp_decaytime].set_name("Decay Time");
    fxdata->p[rp_decaytime].set_type(ct_reverbtime);
-   fxdata->p[rp_damping].set_name("HF Damp");
+   fxdata->p[rp_damping].set_name("HF Damping");
    fxdata->p[rp_damping].set_type(ct_percent);
 
    fxdata->p[rp_locut].set_name("Low Cut");
    fxdata->p[rp_locut].set_type(ct_freq_audible);
-   fxdata->p[rp_freq1].set_name("Band1 Freq");
+   fxdata->p[rp_freq1].set_name("Peak Freq");
    fxdata->p[rp_freq1].set_type(ct_freq_audible);
-   fxdata->p[rp_gain1].set_name("Band1 Gain");
+   fxdata->p[rp_gain1].set_name("Peak Gain");
    fxdata->p[rp_gain1].set_type(ct_decibel);
    fxdata->p[rp_hicut].set_name("High Cut");
    fxdata->p[rp_hicut].set_type(ct_freq_audible);
@@ -389,8 +391,8 @@ void Reverb1Effect::init_ctrltypes()
    fxdata->p[rp_gain1].posy_offset = 5;
    fxdata->p[rp_hicut].posy_offset = 5;
 
-   fxdata->p[rp_mix].posy_offset = 7;
-   fxdata->p[rp_width].posy_offset = 7;
+   fxdata->p[rp_mix].posy_offset = 9;
+   fxdata->p[rp_width].posy_offset = 5;
 
    // sections
    // pre-delay

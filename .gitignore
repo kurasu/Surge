@@ -42,6 +42,7 @@ packages/
 target/
 *.pdb
 packages.config
+CMakeSettings.json
 
 # XCode
 Surge.xcworkspace/
@@ -65,8 +66,8 @@ fxbuild/
 Makefile
 surge-*.make
 premake-stamp
+cmake-stamp
 /Debug
-src/linux/ScalablePiggy*
 *.deb
 
 # Qt Creator
@@ -75,3 +76,11 @@ src/linux/ScalablePiggy*
 
 # cmake
 build/
+buildlin/
+buildmac/
+buildwin/
+
+# Reaper
+*.RPP-bak
+
+surge-fx

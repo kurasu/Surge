@@ -1,6 +1,18 @@
-//-------------------------------------------------------------------------------------------------------
-//		Copyright 2005 Claes Johanson & Vember Audio
-//-------------------------------------------------------------------------------------------------------
+/*
+** Surge Synthesizer is Free and Open Source Software
+**
+** Surge is made available under the Gnu General Public License, v3.0
+** https://www.gnu.org/licenses/gpl-3.0.en.html
+**
+** Copyright 2004-2020 by various individuals as described by the Git transaction log
+**
+** All source at: https://github.com/surge-synthesizer/surge.git
+**
+** Surge was a commercial product from 2004-2018, with Copyright and ownership
+** in that period held by Claes Johanson at Vember Audio. Claes made Surge
+** open source in September 2018.
+*/
+
 #pragma once
 #include "SurgeStorage.h"
 #include "Oscillator.h"
@@ -64,7 +76,6 @@ public:
        {
            // remember note_to_pitch is linear interpolation on storage->table_pitch from
            // position note + 256 % 512
-           bool debug = false;
            // OK so now what we are searching for is the pair which surrounds us plus the pitch drift... so
            float fqShift = 10 * localcopy[scene->osc[oscNum].pitch.param_id_in_scene].f *
                (scene->osc[oscNum].pitch.extend_range ? 12.f : 1.f);
@@ -73,11 +84,14 @@ public:
            int tableIdx = (int)tableNote0;
            if( tableIdx > 0x1fe )
                tableIdx = 0x1fe;
-
+           float tableFrac = tableNote0 - tableIdx;
+           
            // so just iterate up. Deal with negative also of course. Since we will always be close just
            // do it brute force for now but later we can do a binary or some such.
-           float pitch0 = storage->table_pitch[tableIdx];
-           float targetPitch = pitch0 + fqShift * 32.0 / 261.626;
+           float pitch0 = storage->table_pitch[tableIdx] * ( 1.0 - tableFrac ) + storage->table_pitch[tableIdx + 1] * tableFrac;
+           float targetPitch = pitch0 + fqShift / Tunings::MIDI_0_FREQ;
+           if( targetPitch < 0 )
+              targetPitch = 0.01;
            
            if( fqShift > 0 )
            {
@@ -113,7 +127,8 @@ public:
            float frac = (targetPitch - storage->table_pitch[tableIdx]) /
                ( storage->table_pitch[tableIdx + 1] - storage->table_pitch[tableIdx] );
            // frac = 1 -> targetpitch = +1; frac = 0 -> targetPitch
-           
+
+           // std::cout << note0 << " " << tableIdx << " " << frac << " " << fqShift << " " << targetPitch << std::endl;
            return tableIdx + frac - 256;
        }
        else
@@ -156,6 +171,8 @@ private:
    pdata* paramptr;
    int route[6];
 
+   float octaveSize = 12.0f;
+   
    bool osc1, osc2, osc3, ring12, ring23, noise;
    int FMmode;
    float noisegenL[2], noisegenR[2];

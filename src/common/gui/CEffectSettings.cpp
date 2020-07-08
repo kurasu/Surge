@@ -16,11 +16,12 @@ int get_fxtype(int id)
    case fxt_delay:
       return 1;
    case fxt_reverb:
+   case fxt_reverb2:
       return 2;
    case fxt_phaser:
-      return 7;
    case fxt_rotaryspeaker:
    case fxt_chorus4:
+   case fxt_flanger:
       return 3;
    case fxt_distortion:
       return 4;
@@ -29,6 +30,7 @@ int get_fxtype(int id)
    case fxt_conditioner:
       return 6;
    case fxt_freqshift:
+   case fxt_ringmod:
       return 8;
    case fxt_off:
       return 0;
@@ -124,5 +126,29 @@ CMouseEventResult CEffectSettings::onMouseDown(CPoint& where, const CButtonState
 
 CMouseEventResult CEffectSettings::onMouseUp(CPoint& where, const CButtonState& buttons)
 {
+   return kMouseEventHandled;
+}
+
+CMouseEventResult CEffectSettings::onMouseMoved(CPoint& where, const CButtonState& buttons)
+{
+   bool isInside = false;
+   for (int i = 0; i < 8; i++)
+   {
+      CRect size = getViewSize();
+      CRect r(0, 0, 17, 9);
+      r.offset(size.left, size.top);
+      r.offset(blocks[i][0], blocks[i][1]);
+      if (r.pointInside(where))
+      {
+         isInside = true;
+      }
+   }
+   /*
+   if( isInside )
+      getFrame()->setCursor( VSTGUI::kCursorHand );
+   else
+      getFrame()->setCursor( VSTGUI::kCursorDefault );
+   */
+   
    return kMouseEventHandled;
 }

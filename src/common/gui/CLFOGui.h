@@ -1,13 +1,29 @@
-//-------------------------------------------------------------------------------------------------------
-//	Copyright 2005 Claes Johanson & Vember Audio
-//-------------------------------------------------------------------------------------------------------
+/*
+** Surge Synthesizer is Free and Open Source Software
+**
+** Surge is made available under the Gnu General Public License, v3.0
+** https://www.gnu.org/licenses/gpl-3.0.en.html
+**
+** Copyright 2004-2020 by various individuals as described by the Git transaction log
+**
+** All source at: https://github.com/surge-synthesizer/surge.git
+**
+** Surge was a commercial product from 2004-2018, with Copyright and ownership
+** in that period held by Claes Johanson at Vember Audio. Claes made Surge
+** open source in September 2018.
+*/
+
 #pragma once
 #include "vstcontrols.h"
 #include "SurgeStorage.h"
 #include "CDIBitmap.h"
 #include "DspUtilities.h"
+#include "SkinSupport.h"
+#include "SurgeBitmaps.h"
+#include "CScalableBitmap.h"
 
-class CLFOGui : public VSTGUI::CControl
+
+class CLFOGui : public VSTGUI::CControl, public Surge::UI::SkinConsumingComponnt
 {
 public:
    const static int margin = 2;
@@ -17,6 +33,8 @@ public:
    const static int shadowoffset = 1;
    const static int skugga = 0xff5d5d5d;
    const static int splitpoint = lpsize + 20;
+    
+   void drawtri(VSTGUI::CRect r, VSTGUI::CDrawContext* context, int orientation);
 
    CLFOGui(const VSTGUI::CRect& size,
            bool trigmaskedit,
@@ -24,83 +42,59 @@ public:
            long tag = 0,
            LFOStorage* lfodata = 0,
            SurgeStorage* storage = 0,
-           StepSequencerStorage* ss = 0)
-       : VSTGUI::CControl(size, listener, tag, 0)
+           StepSequencerStorage* ss = 0,
+           std::shared_ptr<SurgeBitmaps> ibms = nullptr)
+      : VSTGUI::CControl(size, listener, tag, 0),
+        bitmapStore( ibms )
    {
       this->lfodata = lfodata;
       this->storage = storage;
       this->ss = ss;
       edit_trigmask = trigmaskedit;
-      cdisurf = new CDIBitmap(getWidth() - splitpoint, getHeight());
       controlstate = 0;
 
-      int bgcol = 0xffff9000;
-      int fgcol = 0xff000000;
-      float f_bgcol[4], f_fgcol[4];
-      const float sc = (1.f / 255.f);
-      f_bgcol[0] = (bgcol & 0xff) * sc;
-      f_fgcol[0] = (fgcol & 0xff) * sc;
-      f_bgcol[1] = ((bgcol >> 8) & 0xff) * sc;
-      f_fgcol[1] = ((fgcol >> 8) & 0xff) * sc;
-      f_bgcol[2] = ((bgcol >> 16) & 0xff) * sc;
-      f_fgcol[2] = ((fgcol >> 16) & 0xff) * sc;
+      for( int i=0; i<16; ++i )
+         draggedIntoTrigTray[i] = false;
+   }
 
-      f_bgcol[0] = powf(f_bgcol[0], 2.2f);
-      f_bgcol[1] = powf(f_bgcol[1], 2.2f);
-      f_bgcol[2] = powf(f_bgcol[2], 2.2f);
-      f_fgcol[0] = powf(f_fgcol[0], 2.2f);
-      f_fgcol[1] = powf(f_fgcol[1], 2.2f);
-      f_fgcol[2] = powf(f_fgcol[2], 2.2f);
-
-      for (int i = 0; i < 256; i++)
-      {
-         float x = i * sc;
-         // unsigned int a = limit_range((unsigned int)((float)255.f*powf(x,1.f/2.2f)),0,255);
-         unsigned int r = limit_range(
-             (int)((float)255.f * powf(x * f_fgcol[0] + (1.f - x) * f_bgcol[0], 1.f / 2.2f)), 0,
-             255);
-         unsigned int g = limit_range(
-             (int)((float)255.f * powf(x * f_fgcol[1] + (1.f - x) * f_bgcol[1], 1.f / 2.2f)), 0,
-             255);
-         unsigned int b = limit_range(
-             (int)((float)255.f * powf(x * f_fgcol[2] + (1.f - x) * f_bgcol[2], 1.f / 2.2f)), 0,
-             255);
-         unsigned int a = 0xff;
-
-#if MAC
-          // MAC uses a different raw pixel byte order than windows
-          coltable[ i ] = ( b << 8 ) | ( g << 16 ) | ( r << 24 ) | a;
-#else
-          coltable[i] = r | (g << 8) | (b << 16) | (a << 24);
-#endif
-       }
-#if MAC      
-      coltable[0] = 0x0090ffff;
-#else
-      coltable[0] = 0xffff9000;
-#endif
+   void resetColorTable()
+   {
+      auto c = skin->getColor( "lfo.waveform.fill", VSTGUI::CColor( 0xFF, 0x90, 0x00 ) );
+      auto d = skin->getColor( "lfo.waveform.wave", VSTGUI::CColor( 0x00, 0x00, 0x00 ) );
+      
    }
    // virtual void mouse (CDrawContext *pContext, VSTGUI::CPoint &where, long buttons = -1);
-   virtual VSTGUI::CMouseEventResult onMouseDown(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons);
-   virtual VSTGUI::CMouseEventResult onMouseUp(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons);
-   virtual VSTGUI::CMouseEventResult onMouseMoved(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons);
+   virtual VSTGUI::CMouseEventResult onMouseDown(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons) override;
+   virtual VSTGUI::CMouseEventResult onMouseUp(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons) override;
+   virtual VSTGUI::CMouseEventResult onMouseMoved(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons) override;
+   virtual bool onWheel(const VSTGUI::CPoint& where, const float& distance, const VSTGUI::CButtonState& buttons) override;
 
+   virtual void onSkinChanged() override {
+      resetColorTable();
+   }
+   
    virtual ~CLFOGui()
    {
-      delete cdisurf;
    }
-   virtual void draw(VSTGUI::CDrawContext* dc);
-   void drawVectorized(VSTGUI::CDrawContext* dc);
-   void drawBitmap(VSTGUI::CDrawContext* dc);
-
+   virtual void draw(VSTGUI::CDrawContext* dc) override;
+   void drawStepSeq(VSTGUI::CDrawContext *dc, VSTGUI::CRect &maindisp, VSTGUI::CRect &leftpanel);
+   
    void invalidateIfIdIsInRange(int id);
+   void invalidateIfAnythingIsTemposynced();
+
+   void setTimeSignature(int n, int d ) {
+      tsNum = n;
+      tsDen = d;
+   }
 
 protected:
    LFOStorage* lfodata;
    StepSequencerStorage* ss;
    SurgeStorage* storage;
-   unsigned int coltable[256];
-   CDIBitmap* cdisurf;
+   std::shared_ptr<SurgeBitmaps> bitmapStore;
+   int tsNum = 4, tsDen = 4;
+   
+   
    VSTGUI::CRect shaperect[n_lfoshapes];
    VSTGUI::CRect steprect[n_stepseqsteps];
    VSTGUI::CRect gaterect[n_stepseqsteps];
@@ -108,7 +102,18 @@ protected:
    VSTGUI::CRect ss_shift_left, ss_shift_right;
    bool edit_trigmask;
    int controlstate;
-   bool ignore_bitmap_pref = false; // if this is true, we always use the bitmap
+   int selectedSSrow = -1;
+
+   int draggedStep = -1;
+   int keyModMult = 0;
+
+
+   bool draggedIntoTrigTray[16];
+   int mouseDownTrigTray = -1;
+   VSTGUI::CButtonState trigTrayButtonState;
+   VSTGUI::CPoint rmStepStart, rmStepCurr;
+
+   int ss_shift_hover = 0;
    
    CLASS_METHODS(CLFOGui, VSTGUI::CControl)
 };

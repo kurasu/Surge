@@ -29,10 +29,22 @@ void DualDelayEffect::init()
    lp.suspend();
    hp.suspend();
    setvars(true);
+   inithadtempo = true;
+   // See issue #1444 and the fix for this stuff
+   if( storage->temposyncratio_inv == 0 )
+   {
+      inithadtempo = false;
+   }
 }
 
 void DualDelayEffect::setvars(bool init)
 {
+   if( ! inithadtempo && storage->temposyncratio_inv != 0 )
+   {
+      init = true;
+      inithadtempo = true;
+   }
+   
    float fb = amp_to_linear(*f[2]);
    float cf = amp_to_linear(*f[3]);
 
@@ -60,19 +72,19 @@ void DualDelayEffect::setvars(bool init)
    if (init)
    {
       timeL.newValue(samplerate * ((fxdata->p[0].temposync ? storage->temposyncratio_inv : 1.f) *
-                                   storage->note_to_pitch(12 * fxdata->p[0].val.f)) +
+                                   storage->note_to_pitch_ignoring_tuning(12 * fxdata->p[0].val.f)) +
                      LFOval - FIRoffset);
       timeR.newValue(samplerate * ((fxdata->p[1].temposync ? storage->temposyncratio_inv : 1.f) *
-                                   storage->note_to_pitch(12 * fxdata->p[1].val.f)) -
+                                   storage->note_to_pitch_ignoring_tuning(12 * fxdata->p[1].val.f)) -
                      LFOval - FIRoffset);
    }
    else
    {
       timeL.newValue(samplerate * ((fxdata->p[0].temposync ? storage->temposyncratio_inv : 1.f) *
-                                   storage->note_to_pitch(12 * *f[0])) +
+                                   storage->note_to_pitch_ignoring_tuning(12 * *f[0])) +
                      LFOval - FIRoffset);
       timeR.newValue(samplerate * ((fxdata->p[1].temposync ? storage->temposyncratio_inv : 1.f) *
-                                   storage->note_to_pitch(12 * *f[1])) -
+                                   storage->note_to_pitch_ignoring_tuning(12 * *f[1])) -
                      LFOval - FIRoffset);
    }
 
@@ -212,13 +224,13 @@ const char* DualDelayEffect::group_label(int id)
    case 0:
       return "Input";
    case 1:
-      return "Delay time";
+      return "Delay Time";
    case 2:
       return "Feedback/EQ";
    case 3:
       return "Modulation";
    case 4:
-      return "Mix";
+      return "Output";
    }
    return 0;
 }
@@ -249,9 +261,9 @@ void DualDelayEffect::init_ctrltypes()
    fxdata->p[1].set_name("Right");
    fxdata->p[1].set_type(ct_envtime);
    fxdata->p[2].set_name("Feedback");
-   fxdata->p[2].set_type(ct_amplitude);
+   fxdata->p[2].set_type(ct_percent);
    fxdata->p[3].set_name("Crossfeed");
-   fxdata->p[3].set_type(ct_amplitude);
+   fxdata->p[3].set_type(ct_percent);
    fxdata->p[4].set_name("Low Cut");
    fxdata->p[4].set_type(ct_freq_audible);
    fxdata->p[5].set_name("High Cut");
@@ -272,9 +284,7 @@ void DualDelayEffect::init_ctrltypes()
    fxdata->p[11].set_type(ct_decibel_narrow);
 
    fxdata->p[0].posy_offset = 5;
-   fxdata->p[0].temposync = false;
    fxdata->p[1].posy_offset = 5;
-   fxdata->p[1].temposync = false;
 
    fxdata->p[2].posy_offset = 7;
    fxdata->p[3].posy_offset = 7;
@@ -289,8 +299,8 @@ void DualDelayEffect::init_ctrltypes()
 
    fxdata->p[8].posy_offset = -15;
 
-   fxdata->p[10].posy_offset = 7;
-   fxdata->p[11].posy_offset = 7;
+   fxdata->p[10].posy_offset = 9;
+   fxdata->p[11].posy_offset = 5;
 }
 void DualDelayEffect::init_default_values()
 {

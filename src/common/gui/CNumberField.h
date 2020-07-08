@@ -1,14 +1,22 @@
-//-------------------------------------------------------------------------------------------------------
-//
-//	Shortcircuit
-//
-//	Copyright 2004 Claes Johanson
-//
-//-------------------------------------------------------------------------------------------------------
+/*
+** Surge Synthesizer is Free and Open Source Software
+**
+** Surge is made available under the Gnu General Public License, v3.0
+** https://www.gnu.org/licenses/gpl-3.0.en.html
+**
+** Copyright 2004-2020 by various individuals as described by the Git transaction log
+**
+** All source at: https://github.com/surge-synthesizer/surge.git
+**
+** Surge was a commercial product from 2004-2018, with Copyright and ownership
+** in that period held by Claes Johanson at Vember Audio. Claes made Surge
+** open source in September 2018.
+*/
 
 #pragma once
 
 #include "vstcontrols.h"
+#include "SkinSupport.h"
 
 enum ctrl_mode
 {
@@ -23,6 +31,7 @@ enum ctrl_mode
    cm_envelopetime,
    cm_lforate,
    cm_midichannel,
+   cm_midichannel_from_127,
    cm_mutegroup,
    cm_lag,
    cm_pbdepth,
@@ -102,13 +111,14 @@ enum label_placement
    lp_above
 };
 
-class CNumberField : public VSTGUI::CControl
+class CNumberField : public VSTGUI::CControl, public Surge::UI::SkinConsumingComponnt
 {
 public:
    CNumberField(const VSTGUI::CRect& size,
                 VSTGUI::IControlListener* listener = 0,
                 long tag = 0,
-                VSTGUI::CBitmap* pBackground = 0);
+                VSTGUI::CBitmap* pBackground = 0,
+                SurgeStorage* storage = nullptr);
    ~CNumberField();
 
    virtual void setFontColor(VSTGUI::CColor color);
@@ -143,9 +153,9 @@ public:
       envColor = bgcol;
    }
 
-   virtual void bounceValue();
+   virtual void bounceValue() override;
 
-   virtual void setValue(float val);
+   virtual void setValue(float val) override;
 
    void setIntValue(int ival)
    {
@@ -164,6 +174,7 @@ public:
    }
 
    void setControlMode(int mode);
+   int getControlMode() { return controlmode; }
    void setPoly(int p)
    {
       if (i_poly != p)
@@ -218,13 +229,24 @@ public:
    virtual void setLabel(char* newlabel);
    virtual void setLabelPlacement(int placement);
 
-   virtual void draw(VSTGUI::CDrawContext*);
+   virtual void draw(VSTGUI::CDrawContext*) override;
    // virtual void mouse (VSTGUI::CDrawContext *pContext, VSTGUI::CPoint &where, long buttons = -1);
-   virtual VSTGUI::CMouseEventResult onMouseDown(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons);
-   virtual VSTGUI::CMouseEventResult onMouseUp(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons);
-   virtual VSTGUI::CMouseEventResult onMouseMoved(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons);
-   virtual bool onWheel(const VSTGUI::CPoint& where, const float& distance, const VSTGUI::CButtonState& buttons);
+   virtual VSTGUI::CMouseEventResult onMouseDown(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons) override;
+   virtual VSTGUI::CMouseEventResult onMouseUp(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons) override;
+   virtual VSTGUI::CMouseEventResult onMouseMoved(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons) override;
+
+   virtual VSTGUI::CMouseEventResult onMouseEntered (VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons) override {
+      // getFrame()->setCursor( VSTGUI::kCursorHand );
+      return VSTGUI::kMouseEventHandled;
+   }
+   virtual VSTGUI::CMouseEventResult onMouseExited (VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons) override {
+      // getFrame()->setCursor( VSTGUI::kCursorDefault );
+      return VSTGUI::kMouseEventHandled;
+   }
+   
+   virtual bool onWheel(const VSTGUI::CPoint& where, const float& distance, const VSTGUI::CButtonState& buttons) override;
    bool altlook;
+   SurgeStorage* storage = nullptr;
 
 private:
    VSTGUI::CColor fontColor;

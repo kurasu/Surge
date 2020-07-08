@@ -1,6 +1,18 @@
-//-------------------------------------------------------------------------------------------------------
-//	Copyright 2005 Claes Johanson & Vember Audio
-//-------------------------------------------------------------------------------------------------------
+/*
+** Surge Synthesizer is Free and Open Source Software
+**
+** Surge is made available under the Gnu General Public License, v3.0
+** https://www.gnu.org/licenses/gpl-3.0.en.html
+**
+** Copyright 2004-2020 by various individuals as described by the Git transaction log
+**
+** All source at: https://github.com/surge-synthesizer/surge.git
+**
+** Surge was a commercial product from 2004-2018, with Copyright and ownership
+** in that period held by Claes Johanson at Vember Audio. Claes made Surge
+** open source in September 2018.
+*/
+
 #include "Oscillator.h"
 #include "DspUtilities.h"
 
@@ -103,19 +115,18 @@ void WavetableOscillator::init_ctrltypes()
    oscdata->p[0].set_name("Morph");
    oscdata->p[0].set_type(ct_countedset_percent);
    oscdata->p[0].set_user_data(oscdata);
-   oscdata->p[0].snap = false;
 
-   oscdata->p[1].set_name("Skew V");
+   oscdata->p[1].set_name("Skew Vertical");
    oscdata->p[1].set_type(ct_percent_bidirectional);
    oscdata->p[2].set_name("Saturate");
    oscdata->p[2].set_type(ct_percent);
    oscdata->p[3].set_name("Formant");
    oscdata->p[3].set_type(ct_syncpitch);
-   oscdata->p[4].set_name("Skew H");
+   oscdata->p[4].set_name("Skew Horizontal");
    oscdata->p[4].set_type(ct_percent_bidirectional);
-   oscdata->p[5].set_name("Uni Spread");
+   oscdata->p[5].set_name("Unison Detune");
    oscdata->p[5].set_type(ct_oscspread);
-   oscdata->p[6].set_name("Uni Count");
+   oscdata->p[6].set_name("Unison Voices");
    oscdata->p[6].set_type(ct_osccountWT);
 }
 void WavetableOscillator::init_default_values()
@@ -148,7 +159,7 @@ void WavetableOscillator::convolute(int voice, bool FM, bool stereo)
 
    double detune = drift * driftlfo[voice];
    if (n_unison > 1)
-      detune += localcopy[id_detune].f * (detune_bias * float(voice) + detune_offset);
+      detune += oscdata->p[5].get_extended(localcopy[id_detune].f) * (detune_bias * float(voice) + detune_offset);
 
    // int ipos = (large+oscstate[voice])>>16;
    const float p24 = (1 << 24);
@@ -229,7 +240,11 @@ void WavetableOscillator::convolute(int voice, bool FM, bool stereo)
    // add time until next statechange
    float tempt;
    if (oscdata->p[5].absolute)
-      tempt = storage->note_to_pitch_inv_tuningctr(detune * pitchmult_inv * (1.f / 440.f));
+   {
+      // See the comment in SurgeSuperOscillator.cpp at the absolute treatment
+      tempt = storage->note_to_pitch_inv_ignoring_tuning( detune * storage->note_to_pitch_inv_ignoring_tuning( pitch_t ) * 16 / 0.9443 );
+      if( tempt < 0.1 ) tempt = 0.1;
+   }
    else
       tempt = storage->note_to_pitch_inv_tuningctr(detune);
    float t;

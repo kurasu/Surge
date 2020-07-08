@@ -1,13 +1,10 @@
+#pragma once
 #include <stdio.h>
 #include <algorithm>
+#include <clocale>
 
 static float env_phasemulti = 1000 / 44100.f;
 static float lfo_range = 1000;
-
-#if MAC
-#define min(x, y) std::min(x, y)
-#define max(x, y) std::max(x, y)
-#endif
 
 inline float lfo_phaseincrement(int samples, float rate)
 {
@@ -18,8 +15,8 @@ inline float lfo_phaseincrement(int samples, float rate)
 inline float dB_to_scamp(float in) // ff rev2
 {
    float v = powf(10.f, -0.05f * in);
-   v = max(0.f, v);
-   v = min(1.f, v);
+   v = std::max(0.f, v);
+   v = std::min(1.f, v);
    return v;
 }
 
@@ -46,15 +43,15 @@ inline float timecent_to_seconds(float in)
 inline float seconds_to_envtime(float in) // ff rev2
 {
    float v = powf(in / 30.f, 1.f / 3.f);
-   v = max(0.f, v);
-   v = min(1.f, v);
+   v = std::max(0.f, v);
+   v = std::min(1.f, v);
    return v;
 }
 
-inline char* get_notename(char* s, int i_value)
+inline char* get_notename(char* s, int i_value, int i_offset)
 {
-   int octave = (i_value / 12) - 2;
-   char notenames[12][3] = {"C ", "C#", "D ", "D#", "E ", "F ", "F#", "G ", "G#", "A ", "A#", "B "};
+   int octave = (i_value / 12) - i_offset;
+   char notenames[12][3] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
    sprintf(s, "%s%i", notenames[i_value % 12], octave);
    return s;
 }
@@ -63,4 +60,36 @@ inline float timecent_to_envtime(float in)
 {
    // return seconds_to_envtime(timecent_to_seconds(in));
    return (in / 1200.f);
+}
+
+/*
+** Locales are kinda units aren't they? Anyway thanks to @falktx for this
+** handy little guard class, as shown in issue #1900
+*/
+namespace Surge
+{
+class ScopedLocale {
+public:
+    ScopedLocale() noexcept
+#if WINDOWS
+    : locale(::_strdup(::setlocale(LC_NUMERIC, nullptr)))
+#else    
+    : locale(::strdup(::setlocale(LC_NUMERIC, nullptr)))
+#endif
+    {
+        ::setlocale(LC_NUMERIC, "C");
+    }
+
+    ~ScopedLocale() noexcept
+    {
+        if (locale != nullptr)
+        {
+            ::setlocale(LC_NUMERIC, locale);
+            ::free(locale);
+        }
+    }
+
+private:
+    char* const locale;
+};
 }

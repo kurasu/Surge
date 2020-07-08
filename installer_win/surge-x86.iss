@@ -25,7 +25,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={reg:HKLM\SOFTWARE\VST,VSTPluginsPath|{cf}\VST2}
+DefaultDirName={reg:HKLM\SOFTWARE\VST,VSTPluginsPath|{cf}\VST3}
 DefaultGroupName=Surge
 DisableProgramGroupPage=yes
 LicenseFile=..\LICENSE
@@ -34,19 +34,22 @@ SetupIconFile=surge.ico
 UsePreviousAppDir=no
 Compression=lzma
 SolidCompression=yes
+UninstallFilesDir={{commmonappdata}\Surge\uninsx86}
+
+
+[InstallDelete]
+Type: filesandordirs; Name: "{cf}\VST3\SurgeEffectsBank.vst3"
 
 [Components]
 Name: Data; Description: Data files; Types: full compact custom; Flags: fixed
-Name: VST2; Description: VST2 Plug-in (32 bit); Types: full custom; Flags: checkablealone
 Name: VST3; Description: VST3 Plug-in (32 bit); Types: full compact custom; Flags: checkablealone
 Name: EffectsVST3; Description: SurgeEffectsBank VST3 Plug-in (32 bit); Types: full compact custom; Flags: checkablealone
 
 [Files]
-Source: ..\target\vst2\Release\Surge_x86.dll; DestDir: {app}; Components: VST2; Flags: ignoreversion skipifsourcedoesntexist
-Source: ..\target\vst3\Release\Surge_x86.vst3; DestDir: {cf}\VST3; Components: VST3; Flags: ignoreversion
-Source: ..\fxbuild\surge-fx\Builds\VisualStudio2017\Win32\ReleaseWin32\VST3\SurgeEffectsBank.vst3; DestDir: {cf}\VST3; Components: EffectsVST3; Flags: ignoreversion skipifsourcedoesntexist
-Source: ..\resources\data\*; DestDir: {localappdata}\Surge; Components: Data; Flags: recursesubdirs; Excludes: "*.git";
+Source: ..\resources\data\*; DestDir: {commonappdata}\Surge; Components: Data; Flags: recursesubdirs; Excludes: "*.git";
 Source: ..\resources\fonts\Lato-Regular.ttf; DestDir: "{fonts}"; Components: Data; FontInstall: "Lato"; Flags: onlyifdoesntexist uninsneveruninstall
+Source: ..\build\surge_products\Surge_x86.vst3; DestDir: {cf}\VST3; Components: VST3; Flags: ignoreversion
+Source: ..\surge-fx\build\product\SurgeEffectsBank.vst3; DestDir: {cf}\VST3; Components: EffectsVST3; Flags: ignoreversion skipifsourcedoesntexist recursesubdirs
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
