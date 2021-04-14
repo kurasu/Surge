@@ -1,4 +1,5 @@
 EXPORTS
 	GetPluginFactory
+	appd_init
 	InitDll
 	ExitDll	

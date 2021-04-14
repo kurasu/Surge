@@ -359,6 +359,7 @@ set(SURGE_GUI_SOURCES
 
 set(SURGE_VST3_SOURCES
   src/vst3/SurgeVst3Processor.cpp
+  src/common/PresetDiscovery.cpp
   src/vst3/surgeentry.cpp
   )
 
