@@ -10,10 +10,28 @@
 	url = https://github.com/craigsapp/midifile.git
 [submodule "libs/nanosvg"]
 	path = libs/nanosvg
-	url = https://github.com/memononen/nanosvg.git
+	url = https://github.com/surge-synthesizer/nanosvg.git
 [submodule "libs/lv2"]
 	path = libs/lv2
 	url = https://github.com/drobilla/lv2.git
 [submodule "libs/tuning-library"]
 	path = libs/tuning-library
 	url = https://github.com/surge-synthesizer/tuning-library
+[submodule "libs/simde"]
+	path = libs/simde
+	url = https://github.com/simd-everywhere/simde
+[submodule "libs/pybind11"]
+	path = libs/pybind11
+	url = https://github.com/pybind/pybind11
+[submodule "libs/eurorack/eurorack"]
+	path = libs/eurorack/eurorack
+	url = https://github.com/surge-synthesizer/eurorack.git
+[submodule "libs/filesystem/ghc-filesystem"]
+	path = libs/filesystem/ghc-filesystem
+	url = https://github.com/gulrak/filesystem.git
+[submodule "libs/oddsound-mts/MTS-ESP"]
+	path = libs/oddsound-mts/MTS-ESP
+	url = https://github.com/ODDSound/MTS-ESP
+[submodule "libs/libsamplerate"]
+	path = libs/libsamplerate
+	url = https://github.com/libsndfile/libsamplerate.git

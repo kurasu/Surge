@@ -1,60 +1,75 @@
+#pragma once
+
 //{{NO_DEPENDENCIES}}
 // Microsoft Visual C++ generated include file.
 // Used by surge.rc
 //
-#define IDB_BG 102
-#define IDB_FADERV_BG 105
-#define IDD_EVALUE 107
-#define IDB_FILTERBUTTONS 108
-#define IDB_OSCSWITCH 110
-#define IDB_FBCONFIG 112
-#define IDB_SCENESWITCH 113
-#define IDB_SCENEMODE 114
-#define IDB_OCTAVES_OSC 117
-#define IDB_OCTAVES 118
-#define IDB_OSCMENU 119
-#define IDB_WAVESHAPER 120
-#define IDB_RELATIVE_TOGGLE 121
-#define IDB_OSCSELECT 122
-#define IDB_POLYMODE 123
-#define IDB_MODSRC_BG 124
-#define IDB_SWITCH_KTRK 125
-#define IDB_SWITCH_RETRIGGER 126
-#define IDB_NUMBERS 127
-#define IDB_MODSRC_SYMBOL 128
-#define IDB_FADERH_LABELS 131
-#define IDB_SWITCH_SOLO 132
-#define IDB_SWITCH_FM 133
-#define IDB_SWITCH_MUTE 134
-#define IDB_CONF 135
-#define IDB_FXCONF_SYMBOLS 136
-#define IDB_FXCONF 137
-#define IDB_SWITCH_TEMPOSYNC 140
-#define IDB_SWITCH_LINK 140
-#define IDB_VFADER_MINI_BG_BLACK 141
-#define IDB_OSCROUTE 143
-#define IDB_FXBYPASS 144
-#define IDB_ENVSHAPE 145
-#define IDB_LFOTRIGGER 146
-#define IDD_SAVEPATCH 147
-#define IDB_BUTTON_STORE 148
-#define IDB_BUTTON_MINUSPLUS 149
-#define IDB_BUTTON_CHECK 150
-#define IDB_FMCONFIG 151
-#define IDB_UNIPOLAR 152
-#define IDB_FADERH_HANDLE 153
-#define IDB_FADERH_BG 154
-#define IDB_FADERV_HANDLE 157
-#define IDB_ABOUT 158
-#define IDB_BUTTON_ABOUT 159
-#define IDB_FILTERSUBTYPE 160
-#define IDI_ICON1 164
-#define IDI_SURGE 164
-#define IDR_PNG1 165
-#define IDB_CHARACTER 161
-#define IDB_ENVMODE 162
-#define IDB_STOREPATCH 163
-#define IDB_BUTTON_MENU 164 
+#define IDB_MAIN_BG 102
+#define IDB_SLIDER_VERT_BG 105
+#define IDB_ENTER_VALUE_LEGACY 107
+#define IDB_FILTER_CONFIG 112
+#define IDB_SCENE_SELECT 113
+#define IDB_SCENE_MODE 114
+#define IDB_OSC_OCTAVE 117
+#define IDB_SCENE_OCTAVE 118
+#define IDB_OSC_MENU 119
+#define IDB_WAVESHAPER_MODE 120
+#define IDB_FILTER2_OFFSET 121
+#define IDB_OSC_SELECT 122
+#define IDB_PLAY_MODE 123
+#define IDB_MODSOURCE_BG 124
+#define IDB_OSC_KEYTRACK 125
+#define IDB_OSC_RETRIGGER 126
+#define IDB_MIXER_SOLO 132
+#define IDB_MIXER_MUTE 134
+#define IDB_FX_TYPE_ICONS 136
+#define IDB_FX_GRID 137
+#define IDB_FILTER2_RESONANCE_LINK 140
+#define IDB_MIXER_OSC_ROUTING 143
+#define IDB_FX_GLOBAL_BYPASS 144
+#define IDB_ENV_SHAPE 145
+#define IDB_LFO_TRIGGER_MODE 146
+#define IDB_STORE_PATCH 148
+#define IDB_PREVNEXT_JOG 149
+#define IDB_OSC_FM_ROUTING 151
+#define IDB_LFO_UNIPOLAR 152
+#define IDB_SLIDER_HORIZ_HANDLE 153
+#define IDB_SLIDER_HORIZ_BG 154
+#define IDB_SLIDER_VERT_HANDLE 157
+#define IDB_FILTER_SUBTYPE 160
+#define IDB_OSC_CHARACTER 161
+#define IDB_ENV_MODE 162
+#define IDI_MAIN_MENU 164
+#define IDB_MAIN_MENU 164
+#define IDB_LFO_TYPE 166
+#define IDB_MENU_AS_SLIDER 167
+#define IDB_FILTER_MENU 168
+#define IDB_FILTER_ICONS 169
+
+// == SVG == Do not remove this comment - it indicates the start of the automated SVG adding block
+#define IDB_MSEG_NODES 301
+#define IDB_MSEG_MOVEMENT_MODE 302
+#define IDB_SURGE_ICON 170
+#define IDB_MSEG_VERTICAL_SNAP 303
+#define IDB_MSEG_HORIZONTAL_SNAP 304
+#define IDB_MPE_BUTTON 171
+#define IDB_ZOOM_BUTTON 172
+#define IDB_TUNE_BUTTON 173
+#define IDB_NUMFIELD_POLY_SPLIT 174
+#define IDB_NUMFIELD_PITCHBEND 175
+#define IDB_NUMFIELD_KEYTRACK_ROOT 176
+#define IDB_MSEG_LOOP_MODE 305
+#define IDB_LFO_MSEG_EDIT 177
+#define IDB_LFO_PRESET_MENU 178
+#define IDB_MSEG_SNAPVALUE_NUMFIELD 306
+#define IDB_MODSOURCE_SHOW_LFO 179
+#define IDB_MSEG_EDIT_MODE 307
+#define IDB_ABOUT_LOGOS 180
+#define IDB_ABOUT_BG 158
+#define IDB_VUMETER_BARS 181
+#define IDB_MIDI_LEARN 182
+// == /SVG == Do not remove this comment
+
 #define IDC_NAME 1001
 #define IDC_CATEGORY 1002
 #define IDC_DESCRIPTION 1003
@@ -76,20 +91,6 @@
 #endif
 
 #if WINDOWS
-/*
-** Each of the bitmaps is also available in scaled form. The ID of the scaled bitmaps
-** is ID_BG+SCALABLE_200_OFFSET for the 200% image.
-**
-** Do NOT change the values of these constants without understanding scripts/win/emit-vector-rc.py
-**
-** This is windows only. Mac and Linux use different resource approaches
-*/
-#define SCALABLE_100_OFFSET 70000
-#define SCALABLE_125_OFFSET 71000
-#define SCALABLE_150_OFFSET 72000
-#define SCALABLE_200_OFFSET 73000
-#define SCALABLE_300_OFFSET 74000
-#define SCALABLE_400_OFFSET 75000
 #define SCALABLE_SVG_OFFSET 80000
 
 #include "scalableresource.h" // found in src/windows

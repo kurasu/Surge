@@ -18,22 +18,24 @@
 #include "SurgeParamConfig.h"
 #include "SkinSupport.h"
 
-class CSurgeVuMeter : public VSTGUI::CControl, public Surge::UI::SkinConsumingComponnt
+class CScalableBitmap;
+class CSurgeVuMeter : public VSTGUI::CControl, public Surge::UI::SkinConsumingComponent
 {
-public:
-   CSurgeVuMeter(const VSTGUI::CRect& size);
-   virtual void draw(VSTGUI::CDrawContext* dc) override;
-   void setType(int vutype);
-   // void setSecondaryValue(float v);
-   void setValueR(float f);
-   float getValueR()
-   {
-      return valueR;
-   }
-   bool stereo;
+  public:
+    CSurgeVuMeter(const VSTGUI::CRect &size, VSTGUI::IControlListener *listener);
+    virtual void draw(VSTGUI::CDrawContext *dc) override;
+    void setType(int vutype);
+    // void setSecondaryValue(float v);
+    void setValueR(float f);
+    float getValueR() { return valueR; }
+    bool stereo;
 
-private:
-   float valueR;
-   int type;
-   CLASS_METHODS(CSurgeVuMeter, VSTGUI::CControl)
+    virtual VSTGUI::CMouseEventResult onMouseDown(VSTGUI::CPoint &where,
+                                                  const VSTGUI::CButtonState &button) override;
+
+  private:
+    float valueR;
+    int type;
+    CScalableBitmap *hVuBars = nullptr;
+    CLASS_METHODS(CSurgeVuMeter, VSTGUI::CControl)
 };

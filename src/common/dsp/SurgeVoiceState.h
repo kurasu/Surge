@@ -15,17 +15,28 @@
 
 #pragma once
 
+class SurgeStorage;
+
 struct SurgeVoiceState
 {
-   bool gate;
-   bool keep_playing, uberrelease;
-   float pitch, fvel, pkey, priorpkey, detune, freleasevel;
-   MidiKeyState* keyState;
-   MidiChannelState* mainChannelState;
-   MidiChannelState* voiceChannelState;
-   int key, velocity, channel, scene_id, releasevelocity;
-   float portasrc_key, portaphase;
-   bool porta_doretrigger;
+    bool gate;
+    bool keep_playing, uberrelease;
+    float pitch, scenepbpitch, fvel, pkey, priorpkey, detune, freleasevel;
+    MidiKeyState *keyState;
+    MidiChannelState *mainChannelState;
+    MidiChannelState *voiceChannelState;
+    int key, velocity, channel, scene_id, releasevelocity;
+    float portasrc_key, portaphase;
+    bool porta_doretrigger;
 
-   float getPitch();
+    // These items support the tuning-snap mode in MTS mode
+    float keyRetuning;
+    int keyRetuningForKey = -1000;
+
+    // note that this does not replace the regular pitch bend modulator, only used to smooth MPE
+    // pitch
+    ControllerModulationSource mpePitchBend;
+    float mpePitchBendRange;
+
+    float getPitch(SurgeStorage *storage);
 };

@@ -1,0 +1,20 @@
+<svg width="48" height="56" viewBox="0 0 48 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="2.5" y="2.5" width="13" height="18" rx="5" fill="#CFCFCF"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M13 5L13 15.8569C13 17.0397 12.0437 18 10.8658 18H5L5 7.14309C5 5.96031 5.95651 5 7.13438 5L13 5Z" fill="#CFCFCF"/>
+<rect width="18" height="13" rx="5" transform="matrix(-4.37114e-08 1 1 4.37114e-08 2.5 2.5)" stroke="black"/>
+<path d="M4 12L4 11L14 11L14 12L4 12Z" fill="#393B45"/>
+<rect x="26.5" y="2.5" width="13" height="18" rx="5" fill="#CFCFCF"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M37 5V15.8569C37 17.0397 36.0437 18 34.8658 18H29L29 7.14309C29 5.96031 29.9565 5 31.1344 5L37 5Z" fill="#CFCFCF"/>
+<path d="M31.5 20.5C28.7386 20.5 26.5 18.2614 26.5 15.5L26.5 7.5C26.5 4.73858 28.7386 2.5 31.5 2.5L34.5 2.5C37.2614 2.5 39.5 4.73857 39.5 7.5L39.5 15.5C39.5 18.2614 37.2614 20.5 34.5 20.5L31.5 20.5Z" fill="#4487F6"/>
+<rect width="18" height="13" rx="5" transform="matrix(-4.37114e-08 1 1 4.37114e-08 26.5 2.5)" stroke="black"/>
+<path d="M28 12L28 11L38 11L38 12L28 12Z" fill="#393B45"/>
+<rect x="2.5" y="30.5" width="13" height="18" rx="5" fill="#CFCFCF"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M13 33L13 43.8569C13 45.0397 12.0437 46 10.8658 46H5L5 35.1431C5 33.9603 5.95651 33 7.13438 33H13Z" fill="#CFCFCF"/>
+<rect width="18" height="13" rx="5" transform="matrix(-4.37114e-08 1 1 4.37114e-08 2.5 30.5)" stroke="black"/>
+<path d="M4 40L4 39L14 39L14 40L4 40Z" fill="#393B45"/>
+<rect x="26.5" y="30.5" width="13" height="18" rx="5" fill="#CFCFCF"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M37 33V43.8569C37 45.0397 36.0437 46 34.8658 46H29L29 35.1431C29 33.9603 29.9565 33 31.1344 33H37Z" fill="#CFCFCF"/>
+<path d="M31.5 48.5C28.7386 48.5 26.5 46.2614 26.5 43.5L26.5 35.5C26.5 32.7386 28.7386 30.5 31.5 30.5L34.5 30.5C37.2614 30.5 39.5 32.7386 39.5 35.5L39.5 43.5C39.5 46.2614 37.2614 48.5 34.5 48.5L31.5 48.5Z" fill="#4487F6"/>
+<rect width="18" height="13" rx="5" transform="matrix(-4.37114e-08 1 1 4.37114e-08 26.5 30.5)" stroke="black"/>
+<path d="M28 40L28 39L38 39L38 40L28 40Z" fill="#393B45"/>
+</svg>

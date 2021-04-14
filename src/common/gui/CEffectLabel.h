@@ -16,39 +16,34 @@
 #pragma once
 #include "vstcontrols.h"
 #include "SkinSupport.h"
+#include "SkinColors.h"
 
 extern VSTGUI::CFontRef displayFont;
 
-class CEffectLabel : public VSTGUI::CControl, public Surge::UI::SkinConsumingComponnt
+class CEffectLabel : public VSTGUI::CControl, public Surge::UI::SkinConsumingComponent
 {
-public:
-   CEffectLabel(const VSTGUI::CRect& size) : VSTGUI::CControl(size, 0, 0, 0)
-   {}
+  public:
+    CEffectLabel(const VSTGUI::CRect &size) : VSTGUI::CControl(size, 0, 0, 0) {}
 
-   virtual void draw(VSTGUI::CDrawContext* dc) override
-   {
-      VSTGUI::CRect size = getViewSize();
-      VSTGUI::CRect bl(size);
-      bl.top = bl.bottom - 2;
+    virtual void draw(VSTGUI::CDrawContext *dc) override
+    {
+        VSTGUI::CRect size = getViewSize();
+        VSTGUI::CRect bl(size);
+        bl.top = bl.bottom - 2;
 
-      VSTGUI::CColor gray = {106, 106, 106, 255};
-      dc->setFillColor(skin->getColor("effect.label.hrule", gray));
-      dc->drawRect(bl, VSTGUI::kDrawFilled);
+        dc->setFillColor(skin->getColor(Colors::Effect::Label::Separator));
+        dc->drawRect(bl, VSTGUI::kDrawFilled);
 
-      VSTGUI::CColor dgray = {76, 76, 76, 255};
-      dc->setFontColor(skin->getColor("effect.label.foreground", dgray));
-      dc->setFont(displayFont);
-      dc->drawString(label.c_str(), size, VSTGUI::kLeftText, true);
+        dc->setFontColor(skin->getColor(Colors::Effect::Label::Text));
+        dc->setFont(displayFont);
+        dc->drawString(label.c_str(), size, VSTGUI::kLeftText, true);
 
-      setDirty(false);
-   }
-   void setLabel(std::string s)
-   {
-      label = s;
-   }
+        setDirty(false);
+    }
+    void setLabel(std::string s) { label = s; }
 
-private:
-   std::string label;
+  private:
+    std::string label;
 
-   CLASS_METHODS(CEffectLabel, VSTGUI::CControl)
+    CLASS_METHODS(CEffectLabel, VSTGUI::CControl)
 };

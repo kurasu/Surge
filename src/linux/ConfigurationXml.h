@@ -1,1 +1,0 @@
-extern unsigned char configurationXmlStart[];

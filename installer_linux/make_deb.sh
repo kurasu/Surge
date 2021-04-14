@@ -60,7 +60,7 @@ Package: ${PACKAGE_NAME}
 Version: $DEB_VERSION
 Architecture: amd64
 Maintainer: surgeteam <noreply@github.com>
-Depends: libcairo2, libfontconfig1, libfreetype6, libx11-6, libxcb-cursor0, libxcb-util1, libxcb-xkb1, libxcb1, libxkbcommon-x11-0, libxkbcommon0, fonts-lato, xdg-utils, zenity
+Depends: libc6 (>=2.27), libcairo2, libfontconfig1, libfreetype6, libx11-6, libxcb-cursor0, libxcb-util1, libxcb-xkb1, libxcb1, libxkbcommon-x11-0, libxkbcommon0, fonts-lato, xdg-utils, zenity, xclip
 Provides: vst-plugin
 Section: sound
 Priority: optional
@@ -88,10 +88,7 @@ cp -r ../resources/data/* ${PACKAGE_NAME}/usr/share/${SURGE_NAME}/
 
 # Copy the VST3 bundld 
 cp -r ../build/surge_products/Surge.vst3 ${PACKAGE_NAME}/usr/lib/vst3/
-
-if [[ -d ../surge-fx/build/product/ ]]; then
-    cp -r ../surge-fx/build/product/*vst3 ${PACKAGE_NAME}/usr/lib/vst3/
-fi
+cp -r ../build/surge_products/SurgeEffectsBank.vst3 ${PACKAGE_NAME}/usr/lib/vst3/
 
 # copy the lv2 bundle
 # cp -r ../build/surge_products/Surge.lv2 ${PACKAGE_NAME}/usr/lib/lv2/

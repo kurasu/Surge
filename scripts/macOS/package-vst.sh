@@ -1,11 +1,13 @@
-#!/bin/bash          
+#!/bin/bash
+
+set -euo pipefail
 
 # If no vectors are specified, use the original-vector by default
 # input config
 RES_SRC_LOCATION="resources"
 PACKAGE_SRC_LOCATION="$RES_SRC_LOCATION/osx-vst2"
 
-SVG_SRC_LOCATION="assets/original-vector/SVG/exported"
+SVG_SRC_LOCATION="assets/SurgeClassic/exported"
 FONT_SRC_LOCATION="$RES_SRC_LOCATION/fonts"
 
 BUNDLE_RES_SRC_LOCATION="$RES_SRC_LOCATION/osx-resources"

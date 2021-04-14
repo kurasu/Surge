@@ -69,14 +69,6 @@ Options are:
 Environment variables are:
 
    VST2SDK_DIR=path             If this points at a valid VST2 SDK, VST2 assets will be built
-   BREWBUILD=TRUE               Uses LLVM clang rather than xcode. If you are XCode < 9.4 you will need this
-   SURGE_USE_VECTOR_SKIN={skin} Uses the new vector skins in assets/classic-vector in built asset.
-
-      For SURGE_USE_VECTOR_SKIN you need to give the name of a subdirectory in assets. For instance
-
-            SURGE_USE_VECTOR_SKIN=original-vector ./build-osx.sh --build-validate-au
-
-      will use the 'original-vector' skin and locally build an AU
 
 EOHELP
 }
@@ -267,6 +259,16 @@ run_package()
     echo
 }
 
+build_iwyu()
+{
+    set -x
+    mkdir buildiwyu
+    IWYU=/usr/local/bin/include-what-you-use
+    cd buildiwyu
+    CC="clang" CXX="clang++" cmake -DCMAKE_CXX_INCLUDE_WHAT_YOU_USE="${IWYU};-Xiwyu;any;-Xiwyu;iwyu;-Xiwyu;args" -G Ninja ..
+    cmake --build . > iwyu.output
+}
+
 get_and_build_fx()
 {
     set -x
@@ -357,6 +359,9 @@ case $command in
         ;;
     --get-and-build-fx)
         get_and_build_fx
+        ;;
+    --build-iwyu)
+        build_iwyu
         ;;
     "")
         default_action

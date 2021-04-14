@@ -19,133 +19,149 @@
 #include "CDIBitmap.h"
 #include "DspUtilities.h"
 #include "SkinSupport.h"
+#include "CursorControlGuard.h"
 
 #define OSC_MOD_ANIMATION 0
 
-class COscillatorDisplay : public VSTGUI::CControl, public VSTGUI::IDropTarget, public Surge::UI::SkinConsumingComponnt
+class COscillatorDisplay : public VSTGUI::CControl,
+                           public Surge::UI::SkinConsumingComponent,
+                           public Surge::UI::CursorControlAdapter<COscillatorDisplay>
 {
-public:
-   COscillatorDisplay(const VSTGUI::CRect& size, OscillatorStorage* oscdata, SurgeStorage* storage)
-       : VSTGUI::CControl(size, 0, 0, 0)
-   {
-      this->oscdata = oscdata;
-      this->storage = storage;
-      controlstate = 0;
+  public:
+    COscillatorDisplay(const VSTGUI::CRect &size, VSTGUI::IControlListener *l,
+                       OscillatorStorage *oscdata, SurgeStorage *storage)
+        : VSTGUI::CControl(size, l, 0, 0), Surge::UI::CursorControlAdapter<COscillatorDisplay>(
+                                               storage)
+    {
+        this->oscdata = oscdata;
+        this->storage = storage;
+        controlstate = 0;
 
-      cdisurf = new CDIBitmap(getWidth(), getHeight());
+        this->scene = oscdata->type.scene - 1;
+        this->osc_in_scene = oscdata->type.ctrlgroup_entry;
 
-      int bgcol = 0xff161616;
-      int fgcol = 0x00ff9000;
-      float f_bgcol[4], f_fgcol[4];
-      const float sc = (1.f / 255.f);
-      f_bgcol[0] = (bgcol & 0xff) * sc;
-      f_fgcol[0] = (fgcol & 0xff) * sc;
-      f_bgcol[1] = ((bgcol >> 8) & 0xff) * sc;
-      f_fgcol[1] = ((fgcol >> 8) & 0xff) * sc;
-      f_bgcol[2] = ((bgcol >> 16) & 0xff) * sc;
-      f_fgcol[2] = ((fgcol >> 16) & 0xff) * sc;
+        if (storage->getPatch()
+                .dawExtraState.editor.oscExtraEditState[scene][osc_in_scene]
+                .hasCustomEditor)
+        {
+            openCustomEditor();
+        }
+    }
+    virtual ~COscillatorDisplay() {}
 
-      f_fgcol[0] = powf(f_fgcol[0], 2.2f);
-      f_fgcol[1] = powf(f_fgcol[1], 2.2f);
-      f_fgcol[2] = powf(f_fgcol[2], 2.2f);
+    /*
+     * Custom Editor Support where I can change this UI based on a type to allow edits
+     * Currently only used by alias oscillator
+     */
+    struct CustomEditor
+    {
+        CustomEditor(COscillatorDisplay *d) : disp(d) {}
+        virtual ~CustomEditor() = default;
+        virtual void draw(VSTGUI::CDrawContext *dc) = 0;
 
-      for (int i = 0; i < 256; i++)
-      {
-         float x = i * sc;
-         unsigned int r =
-             limit_range((int)((float)255.f * (1.f - (1.f - powf(x * f_fgcol[0], 1.f / 2.2f)) *
-                                                         (1.f - f_bgcol[0]))),
-                         0, 255);
-         unsigned int g =
-             limit_range((int)((float)255.f * (1.f - (1.f - powf(x * f_fgcol[1], 1.f / 2.2f)) *
-                                                         (1.f - f_bgcol[1]))),
-                         0, 255);
-         unsigned int b =
-             limit_range((int)((float)255.f * (1.f - (1.f - powf(x * f_fgcol[2], 1.f / 2.2f)) *
-                                                         (1.f - f_bgcol[2]))),
-                         0, 255);
-         unsigned int a = 0xff;
+        virtual VSTGUI::CMouseEventResult onMouseDown(VSTGUI::CPoint &where,
+                                                      const VSTGUI::CButtonState &buttons)
+        {
+            return VSTGUI::kMouseEventNotHandled;
+        };
+        virtual VSTGUI::CMouseEventResult onMouseUp(VSTGUI::CPoint &where,
+                                                    const VSTGUI::CButtonState &buttons)
+        {
+            return VSTGUI::kMouseEventNotHandled;
+        };
+        virtual VSTGUI::CMouseEventResult onMouseMoved(VSTGUI::CPoint &where,
+                                                       const VSTGUI::CButtonState &buttons)
+        {
+            return VSTGUI::kMouseEventNotHandled;
+        };
+        virtual VSTGUI::CMouseEventResult onMouseExited(VSTGUI::CPoint &where,
+                                                        const VSTGUI::CButtonState &buttons)
+        {
+            return VSTGUI::kMouseEventNotHandled;
+        };
+        virtual VSTGUI::CMouseEventResult onMouseEntered(VSTGUI::CPoint &where,
+                                                         const VSTGUI::CButtonState &buttons)
+        {
+            return VSTGUI::kMouseEventNotHandled;
+        };
 
-#if MAC
-         // MAC uses a different raw pixel byte order than windows
-         coltable[i] = (b << 8) | (g << 16) | (r << 24) | a;
-#else
-         coltable[i] = r | (g << 8) | (b << 16) | (a << 24);
-#endif
-      }
-   }
-   virtual ~COscillatorDisplay()
-   {
-      delete cdisurf;
-   }
-   virtual void draw(VSTGUI::CDrawContext* dc) override;
+        virtual bool onWheel(const VSTGUI::CPoint &where, const float &distance,
+                             const VSTGUI::CButtonState &buttons)
+        {
+            return false;
+        }
 
-   virtual VSTGUI::DragOperation onDragEnter(VSTGUI::DragEventData data) override
-   {
-       doingDrag = true;
-       /* invalid();
-          setDirty(true); */
+        // Entered and Exited too
+        COscillatorDisplay *disp;
+    };
+    bool canHaveCustomEditor();
+    void openCustomEditor();
+    void closeCustomEditor();
+    std::shared_ptr<CustomEditor> customEditor; // I really want unique but that
+    // clashes with the VSTGUI copy semantics
+    bool customEditorActive = false, editButtonHover = false;
+    VSTGUI::CRect customEditButtonRect;
 
-       return VSTGUI::DragOperation::Copy;
-   }
-   virtual VSTGUI::DragOperation onDragMove(VSTGUI::DragEventData data) override
-   {
-       return VSTGUI::DragOperation::Copy;
-   }
-   virtual void onDragLeave(VSTGUI::DragEventData data) override
-   {
-       doingDrag = false;
-       /* invalid();
-          setDirty(true); */
-   }
-   virtual bool onDrop(VSTGUI::DragEventData data) override;
-   
-   virtual VSTGUI::SharedPointer<VSTGUI::IDropTarget> getDropTarget () override { return this; }
+    virtual void draw(VSTGUI::CDrawContext *dc) override;
 
-   void loadWavetable(int id);
-   void loadWavetableFromFile();
+    void drawExtraEditButton(VSTGUI::CDrawContext *dc, const std::string &label);
 
-   // virtual void mouse (CDrawContext *pContext, VSTGUI::CPoint &where, long button = -1);
-   virtual VSTGUI::CMouseEventResult onMouseDown(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons) override;
-   virtual VSTGUI::CMouseEventResult onMouseUp(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons) override;
-   virtual VSTGUI::CMouseEventResult onMouseMoved(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons) override;
+    void loadWavetable(int id);
+    void loadWavetableFromFile();
 
-   void invalidateIfIdIsInRange(int id);
-   
-#if OSC_MOD_ANIMATION
-   void setIsMod(bool b)
-   {
-      is_mod = b;
-      mod_time = 0;
-   }
-   void setModSource(modsources m)
-   {
-       modsource = m;
-   }
-   void tickModTime()
-   {
-      mod_time += 1.0 / 30.0;
-   }
-#endif
+    // virtual void mouse (CDrawContext *pContext, VSTGUI::CPoint &where, long button = -1);
+    virtual VSTGUI::CMouseEventResult onMouseDown(VSTGUI::CPoint &where,
+                                                  const VSTGUI::CButtonState &buttons) override;
+    virtual VSTGUI::CMouseEventResult onMouseUp(VSTGUI::CPoint &where,
+                                                const VSTGUI::CButtonState &buttons) override;
+    virtual VSTGUI::CMouseEventResult onMouseMoved(VSTGUI::CPoint &where,
+                                                   const VSTGUI::CButtonState &buttons) override;
+    VSTGUI::CMouseEventResult onMouseExited(VSTGUI::CPoint &where,
+                                            const VSTGUI::CButtonState &buttons) override;
+    VSTGUI::CMouseEventResult onMouseEntered(VSTGUI::CPoint &where,
+                                             const VSTGUI::CButtonState &buttons) override;
+    bool onWheel(const VSTGUI::CPoint &where, const float &distance,
+                 const VSTGUI::CButtonState &buttons) override;
 
-protected:
-   void populateMenu(VSTGUI::COptionMenu* m, int selectedItem);
-   bool populateMenuForCategory(VSTGUI::COptionMenu* parent, int categoryId, int selectedItem);
-
-   OscillatorStorage* oscdata;
-   SurgeStorage* storage;
-   unsigned int controlstate;
-   unsigned int coltable[256];
-   CDIBitmap* cdisurf;
-
-   bool doingDrag = false;
+    void invalidateIfIdIsInRange(int id);
 
 #if OSC_MOD_ANIMATION
-   bool is_mod = false;
-   modsources modsource = ms_original;
-   float mod_time = 0;
+    void setIsMod(bool b)
+    {
+        is_mod = b;
+        mod_time = 0;
+    }
+    void setModSource(modsources m) { modsource = m; }
+    void tickModTime() { mod_time += 1.0 / 30.0; }
 #endif
-   VSTGUI::CRect rnext, rprev, rmenu;
-   VSTGUI::CPoint lastpos;
-   CLASS_METHODS(COscillatorDisplay, VSTGUI::CControl)
+
+  protected:
+    void populateMenu(VSTGUI::COptionMenu *m, int selectedItem);
+    bool populateMenuForCategory(VSTGUI::COptionMenu *parent, int categoryId, int selectedItem);
+
+    OscillatorStorage *oscdata;
+    SurgeStorage *storage;
+    unsigned int controlstate;
+
+    int scene, osc_in_scene;
+
+    bool doingDrag = false;
+    enum
+    {
+        NONE,
+        PREV,
+        MENU,
+        NEXT
+    } isWTHover = NONE;
+
+    static constexpr float scaleDownBy = 0.235;
+
+#if OSC_MOD_ANIMATION
+    bool is_mod = false;
+    modsources modsource = ms_original;
+    float mod_time = 0;
+#endif
+    VSTGUI::CRect rnext, rprev, rmenu;
+    VSTGUI::CPoint lastpos;
+    CLASS_METHODS(COscillatorDisplay, VSTGUI::CControl)
 };

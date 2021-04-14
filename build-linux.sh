@@ -37,6 +37,21 @@ GREEN=`tput setaf 2`
 NC=`tput sgr0`
 DEF_BUILD_DIR="buildlin"
 
+UNAME_M=`uname -m`
+if [[ "$UNAME_M" =~ ^arm ]]; then
+   ARM=1
+fi
+if [[ "$UNAME_M" =~ ^aarch ]]; then
+   ARM=1
+fi
+
+if [[ ! -z $ARM ]]; then
+   CMAKE_EXTRA_ARGS="-DARM_NATIVE=native"
+   DEF_BUILD_DIR="buildlin-${UNAME_M}"
+   echo "ARM build activated. Using ARM_NATIVE=native settings; building in ${DEF_BUILD_DIR}"
+fi
+
+
 prerequisite_check()
 {
     if [ ! -f vst3sdk/LICENSE.txt ]; then
@@ -51,7 +66,7 @@ prerequisite_check()
 
 run_cmake()
 {
-    cmake . -B${DEF_BUILD_DIR}
+    cmake . -B${DEF_BUILD_DIR} ${CMAKE_EXTRA_ARGS}
 }
 
 run_cmake_if()
@@ -175,8 +190,7 @@ run_uninstall()
     fi
 
     if [ ! -z "$option_headless" ]; then
-	rm -vf $headless_dest_path/$dest_headless_name/Surge/$dest_headless_name
-	rmdir -v $headless_dest_path/$dest_headless_name/Surge $headless_dest_path/$dest_headless_name	
+	rm -vf $headless_dest_path/$dest_headless_name
     fi
 }
 

@@ -24,14 +24,14 @@ namespace GUI
 **
 ** We retain this value as a float and do not scale it by 100, like we do with
 ** user specified scales, to better match the OS API
-*/    
-float  getDisplayBackingScaleFactor(VSTGUI::CFrame *); 
+*/
+float getDisplayBackingScaleFactor(VSTGUI::CFrame *);
 
 /*
 ** Return the screen dimensions of the best screen containing this frame. If the
 ** frame is not valid or has not yet been shown or so on, return a screen of
 ** size 0x0 at position 0,0.
 */
-VSTGUI::CRect  getScreenDimensions(VSTGUI::CFrame *);
-}
-}
+VSTGUI::CRect getScreenDimensions(VSTGUI::CFrame *);
+} // namespace GUI
+} // namespace Surge

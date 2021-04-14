@@ -16,54 +16,92 @@
 #pragma once
 #include "vstcontrols.h"
 #include "SurgeBitmaps.h"
+#include "SkinSupport.h"
 
-class CEffectSettings : public VSTGUI::CControl
+class CEffectSettings : public VSTGUI::CControl, public Surge::UI::SkinConsumingComponent
 {
-public:
-   CEffectSettings(const VSTGUI::CRect& size,
-                   VSTGUI::IControlListener* listener,
-                   long tag,
-                   int current,
-                   std::shared_ptr<SurgeBitmaps> bitmapStore);
-   virtual void draw(VSTGUI::CDrawContext* dc) override;
-   virtual VSTGUI::CMouseEventResult
-   onMouseDown(VSTGUI::CPoint& where,
-               const VSTGUI::CButtonState& buttons) override; ///< called when a mouse down event occurs
-   virtual VSTGUI::CMouseEventResult
-   onMouseUp(VSTGUI::CPoint& where, const VSTGUI::CButtonState& buttons) override; ///< called when a mouse up event occurs
+    enum MouseActionMode
+    {
+        none,
+        click,
+        drag
+    } mouseActionMode = none;
 
-   virtual VSTGUI::CMouseEventResult onMouseMoved( VSTGUI::CPoint &where, const VSTGUI::CButtonState &buttons ) override;
+    bool hovered = false;
+    int current, currentHover = -1, dragSource = -1;
+    int bypass, disabled, type[8];
 
-   int current;
-   VSTGUI::CBitmap *bg, *labels;
-   int type[8], bypass, disabled;
+    VSTGUI::CBitmap *bg, *labels;
+    VSTGUI::CPoint dragStart, dragCurrent, dragCornerOff;
 
-   void set_type(int id, int t)
-   {
-      type[id] = t;
-      setDirty(true);
-   }
+    // pixel offsets of all FX slots:     A IFX1, A IFX2, B IFX1,   B IFX2,
+    //                                    Send 1, Send 2, Global 1, Global 2
+    const int fxslotpos[n_fx_slots][2] = {{18, 1},  {44, 1},  {18, 41}, {44, 41},
+                                          {18, 21}, {44, 21}, {89, 11}, {89, 31}};
 
-   void set_bypass(int bid)
-   {
-      bypass = bid;
-      invalid();
-   }
+    const int scenelabelbox[n_scenes][2] = {{1, 1}, {1, 41}};
+    const char *scenename[n_scenes] = {"A", "B"};
 
-   void set_disable(int did)
-   {
-      disabled = did;
-   }
+    VSTGUI::CCoord scenelabelboxWidth = 11, scenelabelboxHeight = 11;
+    VSTGUI::CCoord fxslotWidth = 19, fxslotHeight = 11;
 
-   int get_disable()
-   {
-      return disabled;
-   }
+  public:
+    CEffectSettings(const VSTGUI::CRect &size, VSTGUI::IControlListener *listener, long tag,
+                    int current, std::shared_ptr<SurgeBitmaps> bitmapStore);
 
-   int get_current()
-   {
-      return current;
-   }
+    virtual void draw(VSTGUI::CDrawContext *dc) override;
 
-   CLASS_METHODS(CEffectSettings, VSTGUI::CControl)
+    virtual VSTGUI::CMouseEventResult onMouseDown(
+        VSTGUI::CPoint &where,
+        const VSTGUI::CButtonState &buttons) override; ///< called when a mouse down event occurs
+
+    virtual VSTGUI::CMouseEventResult onMouseUp(
+        VSTGUI::CPoint &where,
+        const VSTGUI::CButtonState &buttons) override; ///< called when a mouse up event occurs
+
+    virtual VSTGUI::CMouseEventResult onMouseEntered(VSTGUI::CPoint &where,
+                                                     const VSTGUI::CButtonState &buttons) override
+    {
+        hovered = true;
+        invalid();
+        return VSTGUI::kMouseEventHandled;
+    }
+
+    virtual VSTGUI::CMouseEventResult onMouseExited(VSTGUI::CPoint &where,
+                                                    const VSTGUI::CButtonState &buttons) override
+    {
+        hovered = false;
+        invalid();
+        return VSTGUI::kMouseEventHandled;
+    }
+
+    virtual VSTGUI::CMouseEventResult onMouseMoved(VSTGUI::CPoint &where,
+                                                   const VSTGUI::CButtonState &buttons) override;
+
+    // since graphics asset for FX icons (bmp00136) has frames ordered according to fxt enum
+    // just return FX id
+    int get_fxtype(int id) { return id; }
+
+    void set_type(int id, int t)
+    {
+        type[id] = t;
+        setDirty(true);
+    }
+
+    void set_bypass(int bid)
+    {
+        bypass = bid;
+        invalid();
+    }
+
+    void set_disable(int did) { disabled = did; }
+
+    int get_disable() { return disabled; }
+
+    int get_current() { return current; }
+
+  private:
+    void setColorsForFXSlot(VSTGUI::CDrawContext *dc, VSTGUI::CRect rect, int fxslot);
+
+    CLASS_METHODS(CEffectSettings, VSTGUI::CControl)
 };
