@@ -452,6 +452,7 @@ set(SURGE_COMMON_INCLUDES
   libs/
   libs/strnatcmp
   libs/tuning-library/include
+  libs/preset-discovery/include
   src/common
   src/common/dsp
   src/common/thread

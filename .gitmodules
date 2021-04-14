@@ -35,3 +35,6 @@
 [submodule "libs/libsamplerate"]
 	path = libs/libsamplerate
 	url = https://github.com/libsndfile/libsamplerate.git
+[submodule "libs/preset-discovery"]
+	path = libs/preset-discovery
+	url = https://github.com/bitwig/preset-discovery.git

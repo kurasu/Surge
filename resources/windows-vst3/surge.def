@@ -1,5 +1,6 @@
 EXPORTS
 	GetPluginFactory
-	appd_init
+	preset_discovery_init
+	preset_discovery_terminate
 	InitDll
 	ExitDll	
